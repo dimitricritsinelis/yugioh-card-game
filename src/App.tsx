@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, UserRound } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { loadCards } from "./cardData";
 import {
   advancePhase,
   banishSelected,
   createDemoGameState,
   createInitialGameState,
-  drawCard,
+  endTurn,
   findCardLocation,
   getSelectedCardInstance,
   placeSelectedCard,
   sendSelectedToGraveyard,
+  setLifePoints,
   setPhase,
 } from "./gameLogic";
 import { ActionPanel } from "./components/ActionPanel";
 import { Board } from "./components/Board";
 import { CardDetail } from "./components/CardDetail";
 import { Hand } from "./components/Hand";
+import { PhaseHud } from "./components/PhaseHud";
+import { PlayerStatusCard } from "./components/PlayerStatusCard";
 import type { CardAction, CardRecord, Phase, ZoneKind } from "./types";
 
 // Dev-only: `?scenario=demo` boots a fully populated board for visual testing.
@@ -71,6 +74,15 @@ export default function App() {
     return findCardLocation(game.player, game.selectedCardId);
   }, [game.player, game.selectedCardId]);
 
+  // A hand card can be played; its category decides which zone row lights up.
+  const placeableKind: ZoneKind | null = useMemo(() => {
+    if (!selectedCard || selectedLocation?.area !== "hand") {
+      return null;
+    }
+
+    return selectedCard.card.category === "Monster" ? "monster" : "spellTrap";
+  }, [selectedCard, selectedLocation]);
+
   function resetGame() {
     if (cards.length === 0) {
       return;
@@ -80,43 +92,27 @@ export default function App() {
   }
 
   function selectCard(cardId: string) {
+    // Clicking the already-selected card again deselects it ("unclick").
     setGame((current) => ({
       ...current,
-      selectedCardId: cardId,
-      pendingAction: null,
+      selectedCardId: current.selectedCardId === cardId ? null : cardId,
     }));
   }
 
-  function startAction(action: CardAction) {
-    if (!selectedCard) {
-      return;
-    }
-
-    const zoneKind: ZoneKind = selectedCard.card.category === "Monster" ? "monster" : "spellTrap";
-
-    setGame((current) => ({
-      ...current,
-      pendingAction: {
-        action,
-        zoneKind,
-        cardId: selectedCard.instanceId,
-      },
-    }));
-  }
-
-  function cancelPendingAction() {
-    setGame((current) => ({
-      ...current,
-      pendingAction: null,
-    }));
-  }
-
-  function handleZoneClick(zoneKind: ZoneKind, index: number) {
-    setGame((current) => placeSelectedCard(current, zoneKind, index));
+  function handlePlaceCard(action: CardAction, zoneKind: ZoneKind, index: number) {
+    setGame((current) => placeSelectedCard(current, action, zoneKind, index));
   }
 
   function handlePhaseSelect(phase: Phase) {
     setGame((current) => setPhase(current, phase));
+  }
+
+  function handleAdvance() {
+    setGame((current) => (current.phase === "EP" ? endTurn(current) : advancePhase(current)));
+  }
+
+  function handleSetLp(side: "player" | "opponent", value: number) {
+    setGame((current) => setLifePoints(current, side, value));
   }
 
   if (loadState === "loading") {
@@ -150,9 +146,9 @@ export default function App() {
         <div className="table-column">
           <Board
             game={game}
+            placeableKind={placeableKind}
             onSelectCard={selectCard}
-            onZoneClick={handleZoneClick}
-            onPhaseSelect={handlePhaseSelect}
+            onPlaceCard={handlePlaceCard}
           />
 
           <Hand
@@ -160,66 +156,37 @@ export default function App() {
             selectedCardId={game.selectedCardId}
             lastDrawnCardId={game.lastDrawnCardId}
             onSelectCard={selectCard}
+            onSendToGraveyard={() => setGame((current) => sendSelectedToGraveyard(current))}
+            onBanish={() => setGame((current) => banishSelected(current))}
           />
         </div>
 
         <aside className="side-rail">
           <CardDetail selectedCard={selectedCard} />
-          <ActionPanel
-            game={game}
-            selectedCard={selectedCard}
-            selectedLocation={selectedLocation}
-            onDraw={() => setGame((current) => drawCard(current))}
-            onReset={resetGame}
-            onNextPhase={() => setGame((current) => advancePhase(current))}
-            onStartAction={startAction}
-            onCancelAction={cancelPendingAction}
-            onSendToGraveyard={() => setGame((current) => sendSelectedToGraveyard(current))}
-            onBanish={() => setGame((current) => banishSelected(current))}
-          />
+          <ActionPanel onReset={resetGame} />
         </aside>
 
         <aside className="status-rail" aria-label="Duel status">
           <PlayerStatusCard
-            label="Player 2"
-            eyebrow="Opponent"
+            name="Player 2"
             lp={game.opponent.lp}
-            handCount={game.opponent.hiddenHandCount}
             accent="opponent"
+            onEditLp={(value) => handleSetLp("opponent", value)}
+          />
+          <PhaseHud
+            phase={game.phase}
+            turn={game.turn}
+            onSelectPhase={handlePhaseSelect}
+            onAdvance={handleAdvance}
           />
           <PlayerStatusCard
-            label="Player 1"
-            eyebrow="Player"
+            name="Player 1"
             lp={game.player.lp}
-            handCount={game.player.hand.length}
             accent="player"
+            onEditLp={(value) => handleSetLp("player", value)}
           />
         </aside>
       </section>
     </main>
-  );
-}
-
-interface PlayerStatusCardProps {
-  label: string;
-  eyebrow: string;
-  lp: number;
-  handCount: number;
-  accent: "player" | "opponent";
-}
-
-function PlayerStatusCard({ label, eyebrow, lp, handCount, accent }: PlayerStatusCardProps) {
-  return (
-    <section className={`player-status-card ${accent}-status`}>
-      <div className="avatar-frame">
-        <UserRound size={42} strokeWidth={1.5} />
-      </div>
-      <div>
-        <p className="eyebrow">{eyebrow}</p>
-        <h2>{label}</h2>
-        <strong>{lp.toLocaleString()} <span>LP</span></strong>
-        <em>{handCount} cards in hand</em>
-      </div>
-    </section>
   );
 }

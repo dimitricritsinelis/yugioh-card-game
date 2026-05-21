@@ -1,5 +1,6 @@
 import { createCardInstance, createRandomDeck } from "./cardData";
 import type {
+  CardAction,
   CardCategory,
   CardInstance,
   CardLocation,
@@ -14,6 +15,15 @@ import type {
 export const PHASES: Phase[] = ["DP", "SP", "M1", "BP", "M2", "EP"];
 export const MAX_HAND_SLOTS = 6;
 export const ZONE_COUNT = 5;
+
+export const PHASE_INFO: Record<Phase, { short: string; full: string }> = {
+  DP: { short: "Draw", full: "Draw Phase" },
+  SP: { short: "Standby", full: "Standby Phase" },
+  M1: { short: "Main 1", full: "Main Phase 1" },
+  BP: { short: "Battle", full: "Battle Phase" },
+  M2: { short: "Main 2", full: "Main Phase 2" },
+  EP: { short: "End", full: "End Phase" },
+};
 
 export function createInitialGameState(cards: CardRecord[]): GameState {
   const deck = createRandomDeck(cards, 40);
@@ -32,7 +42,6 @@ export function createInitialGameState(cards: CardRecord[]): GameState {
     },
     opponent: {
       lp: 8000,
-      hiddenHandCount: 5,
       monsterZones: [false, true, false, true, false],
       spellTrapZones: [true, false, false, false, true],
       deckCount: 35,
@@ -40,8 +49,8 @@ export function createInitialGameState(cards: CardRecord[]): GameState {
       banishedCount: 0,
     },
     phase: "DP",
+    turn: 1,
     selectedCardId: hand[0]?.instanceId ?? null,
-    pendingAction: null,
     actionLog: [
       {
         id: crypto.randomUUID(),
@@ -115,6 +124,7 @@ export function createDemoGameState(cards: CardRecord[]): GameState {
       banishedCount: 2,
     },
     phase: "M1",
+    turn: 3,
     selectedCardId: monsters[3].instanceId,
     lastDrawnCardId: null,
     lastPlacedCardId: null,
@@ -148,7 +158,6 @@ export function drawCard(state: GameState): GameState {
         hand,
       },
       selectedCardId: drawnCard.instanceId,
-      pendingAction: null,
       lastDrawnCardId: drawnCard.instanceId,
       lastPlacedCardId: null,
     },
@@ -158,16 +167,38 @@ export function drawCard(state: GameState): GameState {
 
 export function advancePhase(state: GameState): GameState {
   const currentIndex = PHASES.indexOf(state.phase);
-  const nextPhase = PHASES[(currentIndex + 1) % PHASES.length];
+
+  // The End Phase is the final step of a turn; advancing past it is handled by
+  // endTurn() rather than wrapping back to the Draw Phase here.
+  if (currentIndex >= PHASES.length - 1) {
+    return state;
+  }
+
+  const nextPhase = PHASES[currentIndex + 1];
 
   return addLog(
     {
       ...state,
       phase: nextPhase,
-      pendingAction: null,
     },
-    `Phase changed to ${nextPhase}.`,
+    `Entered ${PHASE_INFO[nextPhase].full}.`,
   );
+}
+
+export function endTurn(state: GameState): GameState {
+  const nextTurn = state.turn + 1;
+  const turnStarted = addLog(
+    {
+      ...state,
+      phase: "DP",
+      turn: nextTurn,
+    },
+    `Turn ${nextTurn} begins.`,
+  );
+
+  // Auto-draw for the new turn. drawCard already guards an empty deck and a
+  // full hand, logging the reason when it cannot draw.
+  return drawCard(turnStarted);
 }
 
 export function setPhase(state: GameState, phase: Phase): GameState {
@@ -175,77 +206,86 @@ export function setPhase(state: GameState, phase: Phase): GameState {
     {
       ...state,
       phase,
-      pendingAction: null,
     },
-    `Phase changed to ${phase}.`,
+    `Jumped to ${PHASE_INFO[phase].full}.`,
   );
 }
 
-export function placeSelectedCard(state: GameState, zoneKind: ZoneKind, index: number): GameState {
-  const pendingAction = state.pendingAction;
+export function setLifePoints(
+  state: GameState,
+  side: "player" | "opponent",
+  value: number,
+): GameState {
+  const lp = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
 
-  if (!pendingAction || pendingAction.zoneKind !== zoneKind || pendingAction.cardId !== state.selectedCardId) {
-    return state;
-  }
-
-  const location = findCardLocation(state.player, pendingAction.cardId);
-
-  if (!location || location.area !== "hand") {
+  if (side === "player") {
     return addLog(
-      {
-        ...state,
-        pendingAction: null,
-      },
-      "Only cards in hand can be placed from the action panel.",
+      { ...state, player: { ...state.player, lp } },
+      `Player 1 Life Points set to ${lp.toLocaleString()}.`,
     );
   }
 
-  const targetZones = zoneKind === "monster" ? state.player.monsterZones : state.player.spellTrapZones;
+  return addLog(
+    { ...state, opponent: { ...state.opponent, lp } },
+    `Player 2 Life Points set to ${lp.toLocaleString()}.`,
+  );
+}
+
+export function placeSelectedCard(
+  state: GameState,
+  action: CardAction,
+  zoneKind: ZoneKind,
+  index: number,
+): GameState {
+  const cardId = state.selectedCardId;
+
+  if (!cardId) {
+    return state;
+  }
+
+  const location = findCardLocation(state.player, cardId);
+
+  if (!location || location.area !== "hand") {
+    return state;
+  }
+
+  const instance = state.player.hand[location.index];
+  const requiredKind: ZoneKind = instance.card.category === "Monster" ? "monster" : "spellTrap";
+
+  // Card-to-slot compatibility: monsters only go to monster zones, spells/traps to S/T zones.
+  if (requiredKind !== zoneKind) {
+    return state;
+  }
+
+  const targetZones =
+    zoneKind === "monster" ? state.player.monsterZones : state.player.spellTrapZones;
 
   if (targetZones[index]) {
     return state;
   }
 
-  const instance = state.player.hand[location.index];
-  const faceDown = pendingAction.action === "set";
   const zoneCard: ZoneCard = {
     instance,
-    faceDown,
-    stance:
-      pendingAction.action === "summon"
-        ? "attack"
-        : pendingAction.action === "activate"
-          ? "activated"
-          : "set",
+    faceDown: action === "set",
+    stance: action === "summon" ? "attack" : action === "activate" ? "activated" : "set",
   };
 
-  const player = removeCardFromPlayer(state.player, pendingAction.cardId);
+  const player = removeCardFromPlayer(state.player, cardId);
   const nextZones = [...targetZones];
   nextZones[index] = zoneCard;
 
   const nextPlayer =
     zoneKind === "monster"
-      ? {
-          ...player,
-          monsterZones: nextZones,
-        }
-      : {
-          ...player,
-          spellTrapZones: nextZones,
-        };
+      ? { ...player, monsterZones: nextZones }
+      : { ...player, spellTrapZones: nextZones };
 
   const actionLabel =
-    pendingAction.action === "summon"
-      ? "Summoned"
-      : pendingAction.action === "activate"
-        ? "Activated"
-        : "Set";
+    action === "summon" ? "Summoned" : action === "activate" ? "Activated" : "Set";
 
   return addLog(
     {
       ...state,
       player: nextPlayer,
-      pendingAction: null,
       selectedCardId: instance.instanceId,
       lastPlacedCardId: instance.instanceId,
       lastDrawnCardId: null,
@@ -275,7 +315,6 @@ export function sendSelectedToGraveyard(state: GameState): GameState {
         ...player,
         graveyard: [graveCard, ...player.graveyard],
       },
-      pendingAction: null,
       selectedCardId: selected.instanceId,
       lastPlacedCardId: null,
     },
@@ -304,7 +343,6 @@ export function banishSelected(state: GameState): GameState {
         ...player,
         banished: [banishedCard, ...player.banished],
       },
-      pendingAction: null,
       selectedCardId: selected.instanceId,
       lastPlacedCardId: null,
     },
@@ -352,15 +390,6 @@ export function findCardLocation(player: PlayerState, cardId: string): CardLocat
   }
 
   return null;
-}
-
-export function isOpenTargetZone(state: GameState, zoneKind: ZoneKind, index: number): boolean {
-  if (!state.pendingAction || state.pendingAction.zoneKind !== zoneKind) {
-    return false;
-  }
-
-  const zones = zoneKind === "monster" ? state.player.monsterZones : state.player.spellTrapZones;
-  return !zones[index];
 }
 
 function removeCardFromPlayer(player: PlayerState, cardId: string): PlayerState {

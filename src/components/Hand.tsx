@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { MAX_HAND_SLOTS } from "../gameLogic";
+import { Ban, Send } from "lucide-react";
 import type { CardInstance } from "../types";
 import { CardView } from "./CardView";
 
@@ -8,11 +8,20 @@ interface HandProps {
   selectedCardId: string | null;
   lastDrawnCardId: string | null;
   onSelectCard: (cardId: string) => void;
+  onSendToGraveyard: () => void;
+  onBanish: () => void;
 }
 
-export function Hand({ cards, selectedCardId, lastDrawnCardId, onSelectCard }: HandProps) {
-  const slots = Array.from({ length: MAX_HAND_SLOTS }, (_, index) => cards[index] ?? null);
-  const fanCenter = (MAX_HAND_SLOTS - 1) / 2;
+export function Hand({
+  cards,
+  selectedCardId,
+  lastDrawnCardId,
+  onSelectCard,
+  onSendToGraveyard,
+  onBanish,
+}: HandProps) {
+  const fanCenter = (cards.length - 1) / 2;
+  const hasSelection = Boolean(selectedCardId);
 
   function fanStyle(index: number): CSSProperties & Record<string, string> {
     const offset = index - fanCenter;
@@ -25,13 +34,30 @@ export function Hand({ cards, selectedCardId, lastDrawnCardId, onSelectCard }: H
 
   return (
     <section className="hand-dock player-accent" aria-label="Player hand">
-      <div className="hand-label">
-        <span>Player Hand</span>
-        <strong>{cards.length}/{MAX_HAND_SLOTS}</strong>
+      <div className="hand-actions">
+        <button
+          type="button"
+          className="hand-action-btn"
+          onClick={onSendToGraveyard}
+          disabled={!hasSelection}
+        >
+          <Send size={15} />
+          Graveyard
+        </button>
+        <button
+          type="button"
+          className="hand-action-btn"
+          onClick={onBanish}
+          disabled={!hasSelection}
+        >
+          <Ban size={15} />
+          Banish
+        </button>
       </div>
-      <div className="hand-fan">
-        {slots.map((card, index) =>
-          card ? (
+
+      <div className="hand-main">
+        <div className="hand-fan">
+          {cards.map((card, index) => (
             <div
               className={`hand-card ${card.instanceId === lastDrawnCardId ? "drawn" : ""}`}
               key={card.instanceId}
@@ -43,16 +69,8 @@ export function Hand({ cards, selectedCardId, lastDrawnCardId, onSelectCard }: H
                 onClick={() => onSelectCard(card.instanceId)}
               />
             </div>
-          ) : (
-            <div
-              className="hand-card"
-              key={`empty-${index}`}
-              style={fanStyle(index)}
-            >
-              <CardView placeholder label="Slot" />
-            </div>
-          ),
-        )}
+          ))}
+        </div>
       </div>
     </section>
   );

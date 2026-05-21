@@ -68,18 +68,11 @@ export interface PlayerState {
 
 export interface OpponentState {
   lp: number;
-  hiddenHandCount: number;
   monsterZones: boolean[];
   spellTrapZones: boolean[];
   deckCount: number;
   graveyardCount: number;
   banishedCount: number;
-}
-
-export interface PendingAction {
-  action: CardAction;
-  zoneKind: ZoneKind;
-  cardId: string;
 }
 
 export interface ActionLogEntry {
@@ -91,8 +84,8 @@ export interface GameState {
   player: PlayerState;
   opponent: OpponentState;
   phase: Phase;
+  turn: number;
   selectedCardId: string | null;
-  pendingAction: PendingAction | null;
   actionLog: ActionLogEntry[];
   lastDrawnCardId: string | null;
   lastPlacedCardId: string | null;
