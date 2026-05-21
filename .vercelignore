@@ -1,0 +1,16 @@
+node_modules/
+card_scraper/node_modules/
+
+dist*
+*.tsbuildinfo
+.vite/
+.cache/
+.vercel/
+
+.DS_Store
+card_scraper/artifacts/
+
+# Runtime card bundle required by the app.
+!yugioh_cards/
+!yugioh_cards/**
+!public/yugioh_cards
