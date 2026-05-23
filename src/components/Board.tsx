@@ -1,17 +1,56 @@
 import { CARD_DECK_IMAGE_URL } from "../cardData";
+import type { LegalPlacementAction } from "../gameLogic";
 import type { CardAction, CardInstance, GameState, ZoneKind } from "../types";
 import { CardView } from "./CardView";
 
 interface BoardProps {
   game: GameState;
-  placeableKind: ZoneKind | null;
+  legalPlacements: LegalPlacementAction[];
   onSelectCard: (cardId: string) => void;
-  onPlaceCard: (action: CardAction, zoneKind: ZoneKind, index: number) => void;
+  onPlaceCard: (placement: LegalPlacementAction) => void;
+  tributeSelection: TributeSelectionView | null;
+  onToggleTribute: (instanceId: string) => void;
+  onCancelTribute: () => void;
+  onConfirmTribute: () => void;
 }
 
-export function Board({ game, placeableKind, onSelectCard, onPlaceCard }: BoardProps) {
+interface TributeSelectionView {
+  requiredCount: number;
+  selectedTributeIds: string[];
+  lockedTributeIds: string[];
+}
+
+export function Board({
+  game,
+  legalPlacements,
+  onSelectCard,
+  onPlaceCard,
+  tributeSelection,
+  onToggleTribute,
+  onCancelTribute,
+  onConfirmTribute,
+}: BoardProps) {
   return (
     <section className="board-frame" aria-label="Duel board">
+      {tributeSelection ? (
+        <div className="tribute-selection-banner" role="status">
+          <span>
+            Select Tributes {tributeSelection.selectedTributeIds.length}/{tributeSelection.requiredCount}
+          </span>
+          <button
+            type="button"
+            className="tribute-confirm-btn"
+            disabled={tributeSelection.selectedTributeIds.length !== tributeSelection.requiredCount}
+            onClick={onConfirmTribute}
+          >
+            Confirm
+          </button>
+          <button type="button" className="tribute-cancel-btn" onClick={onCancelTribute}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
+
       <div className="board-side opponent-side">
         <DeckPile deckCount={game.opponent.deckCount} monsterRowFirst={false} />
         <div className="zone-grid">
@@ -37,9 +76,11 @@ export function Board({ game, placeableKind, onSelectCard, onPlaceCard }: BoardP
             cards={game.player.monsterZones}
             selectedCardId={game.selectedCardId}
             lastPlacedCardId={game.lastPlacedCardId}
-            placeableKind={placeableKind}
+            legalPlacements={legalPlacements}
             onSelectCard={onSelectCard}
             onPlaceCard={onPlaceCard}
+            tributeSelection={tributeSelection}
+            onToggleTribute={onToggleTribute}
           />
           <ZoneRow
             label="Spell / Trap"
@@ -48,9 +89,11 @@ export function Board({ game, placeableKind, onSelectCard, onPlaceCard }: BoardP
             cards={game.player.spellTrapZones}
             selectedCardId={game.selectedCardId}
             lastPlacedCardId={game.lastPlacedCardId}
-            placeableKind={placeableKind}
+            legalPlacements={legalPlacements}
             onSelectCard={onSelectCard}
             onPlaceCard={onPlaceCard}
+            tributeSelection={null}
+            onToggleTribute={onToggleTribute}
           />
         </div>
         {/* Player rows run Monster → S/T, so graveyard (monster row) sits above banished (S/T row). */}
@@ -183,37 +226,54 @@ const ZONE_ACTIONS: Record<ZoneKind, Array<{ action: CardAction; label: string }
 interface ZoneActionsProps {
   zoneKind: ZoneKind;
   index: number;
-  onPlaceCard: (action: CardAction, zoneKind: ZoneKind, index: number) => void;
+  placements: LegalPlacementAction[];
+  onPlaceCard: (placement: LegalPlacementAction) => void;
 }
 
-function ZoneActions({ zoneKind, index, onPlaceCard }: ZoneActionsProps) {
+function ZoneActions({ zoneKind, index, placements, onPlaceCard }: ZoneActionsProps) {
   return (
     <div className="zone-actions">
-      {ZONE_ACTIONS[zoneKind].map(({ action, label }) => (
-        <button
-          key={action}
-          type="button"
-          className="zone-action-btn"
-          onClick={() => onPlaceCard(action, zoneKind, index)}
-        >
-          {label}
-        </button>
-      ))}
+      {ZONE_ACTIONS[zoneKind]
+        .map(({ action }) => placements.find((placement) => placement.intent === action))
+        .filter((placement): placement is LegalPlacementAction => Boolean(placement))
+        .map((placement) => (
+          <button
+            key={`${placement.intent}-${index}`}
+            type="button"
+            className="zone-action-btn"
+            onClick={() => onPlaceCard(placement)}
+          >
+            {placementLabel(placement)}
+          </button>
+        ))}
     </div>
+  );
+}
+
+function placementLabel(placement: LegalPlacementAction): string {
+  if (placement.zoneKind === "monster" && (placement.tributeCount ?? 0) > 0) {
+    return placement.intent === "set" ? "Tribute Set" : "Tribute Summon";
+  }
+
+  return (
+    ZONE_ACTIONS[placement.zoneKind].find(({ action }) => action === placement.intent)?.label ??
+    placement.intent
   );
 }
 
 interface ZoneRowProps {
   label: string;
   accent: "player" | "opponent";
-  hiddenZones?: boolean[];
+  hiddenZones?: GameState["opponent"]["monsterZones"];
   zoneKind?: ZoneKind;
   cards?: GameState["player"]["monsterZones"];
   selectedCardId?: string | null;
   lastPlacedCardId?: string | null;
-  placeableKind?: ZoneKind | null;
+  legalPlacements?: LegalPlacementAction[];
   onSelectCard?: (cardId: string) => void;
-  onPlaceCard?: (action: CardAction, zoneKind: ZoneKind, index: number) => void;
+  onPlaceCard?: (placement: LegalPlacementAction) => void;
+  tributeSelection?: TributeSelectionView | null;
+  onToggleTribute?: (instanceId: string) => void;
 }
 
 function ZoneRow({
@@ -224,9 +284,11 @@ function ZoneRow({
   cards,
   selectedCardId,
   lastPlacedCardId,
-  placeableKind,
+  legalPlacements = [],
   onSelectCard,
   onPlaceCard,
+  tributeSelection = null,
+  onToggleTribute,
 }: ZoneRowProps) {
   const zones = hiddenZones ?? cards ?? [];
 
@@ -236,12 +298,39 @@ function ZoneRow({
         {zones.map((zone, index) => {
           const zoneCard = typeof zone === "object" ? zone : null;
           const isHidden = typeof zone === "boolean" && zone;
+          const legalZonePlacements = zoneKind
+            ? legalPlacements.filter(
+                (placement) => placement.zoneKind === zoneKind && placement.zoneIndex === index,
+              )
+            : [];
+          const hasTributePlacement = legalZonePlacements.some((placement) => (placement.tributeCount ?? 0) > 0);
           const showActions =
-            !zoneCard && !isHidden && Boolean(zoneKind) && placeableKind === zoneKind;
+            !tributeSelection &&
+            !isHidden &&
+            Boolean(zoneKind) &&
+            legalZonePlacements.length > 0 &&
+            (!zoneCard || hasTributePlacement);
+          const tributeSelected =
+            Boolean(zoneCard) &&
+            Boolean(tributeSelection?.selectedTributeIds.includes(zoneCard!.instance.instanceId));
+          const tributeLocked =
+            Boolean(zoneCard) &&
+            Boolean(tributeSelection?.lockedTributeIds.includes(zoneCard!.instance.instanceId));
+          const tributeSelectionFull =
+            Boolean(tributeSelection) &&
+            tributeSelection!.selectedTributeIds.length >= tributeSelection!.requiredCount;
+          const tributeCandidate =
+            Boolean(tributeSelection) &&
+            zoneKind === "monster" &&
+            Boolean(zoneCard) &&
+            (!tributeSelectionFull || tributeSelected);
           const zoneClasses = [
             "duel-zone",
             zoneCard || isHidden ? "occupied" : "",
             showActions ? "action-target" : "",
+            tributeCandidate ? "tribute-candidate" : "",
+            tributeSelected ? "tribute-selected" : "",
+            tributeLocked ? "tribute-locked" : "",
           ]
             .filter(Boolean)
             .join(" ");
@@ -258,16 +347,43 @@ function ZoneRow({
                   faceDown={zoneCard.faceDown}
                   compact
                   selected={zoneCard.instance.instanceId === selectedCardId}
-                  className={zoneCard.instance.instanceId === lastPlacedCardId ? "placed" : ""}
-                  onClick={() => onSelectCard?.(zoneCard.instance.instanceId)}
+                  className={[
+                    zoneCard.instance.instanceId === lastPlacedCardId ? "placed" : "",
+                    tributeSelected ? "tribute-selected-card" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onClick={
+                    tributeCandidate || onSelectCard
+                      ? () =>
+                          tributeCandidate
+                            ? onToggleTribute?.(zoneCard.instance.instanceId)
+                            : onSelectCard?.(zoneCard.instance.instanceId)
+                      : undefined
+                  }
                 />
               ) : isHidden ? (
                 <CardView faceDown compact label="Set" />
-              ) : showActions && zoneKind && onPlaceCard ? (
-                <ZoneActions zoneKind={zoneKind} index={index} onPlaceCard={onPlaceCard} />
-              ) : (
-                <span>{index + 1}</span>
-              )}
+              ) : null}
+
+              {showActions && zoneKind && onPlaceCard ? (
+                <ZoneActions
+                  zoneKind={zoneKind}
+                  index={index}
+                  placements={legalZonePlacements}
+                  onPlaceCard={onPlaceCard}
+                />
+              ) : null}
+
+              {tributeCandidate && zoneCard ? (
+                <button
+                  type="button"
+                  className="tribute-candidate-btn"
+                  onClick={() => onToggleTribute?.(zoneCard.instance.instanceId)}
+                >
+                  {tributeLocked ? "Required" : tributeSelected ? "Selected" : "Tribute"}
+                </button>
+              ) : null}
             </div>
           );
         })}

@@ -1,4 +1,4 @@
-import { getCardImageUrl } from "../cardData";
+import { getCardImageUrl, getSummonProfile } from "../cardData";
 import type { CardInstance } from "../types";
 
 interface CardDetailProps {
@@ -16,6 +16,7 @@ export function CardDetail({ selectedCard }: CardDetailProps) {
   }
 
   const card = selectedCard.card;
+  const summon = getSummonProfile(card);
 
   return (
     <section className="stone-panel detail-panel" aria-label="Selected card detail">
@@ -35,6 +36,26 @@ export function CardDetail({ selectedCard }: CardDetailProps) {
           <div>
             <span>DEF</span>
             <strong>{card.monster.def ?? "?"}</strong>
+          </div>
+        </div>
+      ) : null}
+      {summon ? (
+        <div className="summon-pills" role="group" aria-label="Summon method">
+          <div className={`summon-pill ${summon.kind !== "special" ? "active" : ""}`}>
+            <span className="summon-pill-type">
+              {summon.kind === "tribute" ? "Tribute Summon" : "Normal Summon"}
+            </span>
+            {summon.kind === "tribute" ? (
+              <span className="summon-pill-detail">
+                {summon.tributes} {summon.tributes === 1 ? "Tribute" : "Tributes"}
+              </span>
+            ) : null}
+          </div>
+          <div className={`summon-pill ${summon.kind === "special" ? "active" : ""}`}>
+            <span className="summon-pill-type">Special Summon</span>
+            {summon.kind === "special" && summon.specialType ? (
+              <span className="summon-pill-detail">{summon.specialType}</span>
+            ) : null}
           </div>
         </div>
       ) : null}

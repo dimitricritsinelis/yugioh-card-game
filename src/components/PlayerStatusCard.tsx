@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Pencil, UserRound } from "lucide-react";
 
 interface PlayerStatusCardProps {
   name: string;
@@ -24,8 +23,7 @@ export function PlayerStatusCard({ name, lp, accent, onEditLp }: PlayerStatusCar
     setEditing(true);
   }
 
-  // Commits on Enter or blur; Escape cancels (handled inline). drawCard-style
-  // clamping lives in setLifePoints, so an out-of-range number is safe here.
+  // Commits on Enter or blur; Escape cancels. setLifePoints clamps out-of-range input.
   function commit() {
     setEditing(false);
     const next = Number(draft);
@@ -36,44 +34,43 @@ export function PlayerStatusCard({ name, lp, accent, onEditLp }: PlayerStatusCar
 
   return (
     <section className={`player-status-card ${accent}-status`}>
-      <div className="avatar-frame">
-        <UserRound size={26} strokeWidth={1.6} />
-      </div>
-      <div className="player-status-body">
-        <p className="player-status-name">{name}</p>
-        {editing ? (
-          <input
-            ref={inputRef}
-            type="number"
-            min={0}
-            className="lp-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commit}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                commit();
-              } else if (event.key === "Escape") {
-                setEditing(false);
-              }
-            }}
-            aria-label={`${name} Life Points`}
-          />
-        ) : (
-          <p className="lp-readout">
-            <strong>{lp.toLocaleString()}</strong>
-            <span>LP</span>
-            <button
-              type="button"
-              className="lp-edit-btn"
-              onClick={beginEdit}
-              aria-label={`Edit ${name} Life Points`}
-            >
-              <Pencil size={11} />
-            </button>
-          </p>
-        )}
-      </div>
+      <p className="player-status-name">{name}</p>
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="number"
+          min={0}
+          className="lp-input"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commit();
+            } else if (event.key === "Escape") {
+              setEditing(false);
+            }
+          }}
+          aria-label={`${name} Life Points`}
+        />
+      ) : (
+        <p
+          className="lp-readout"
+          role="button"
+          tabIndex={0}
+          aria-label={`${name} Life Points — double-click to edit`}
+          onDoubleClick={beginEdit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              beginEdit();
+            }
+          }}
+        >
+          <strong>{lp.toLocaleString()}</strong>
+          <span>LP</span>
+        </p>
+      )}
     </section>
   );
 }

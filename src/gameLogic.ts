@@ -1,4 +1,19 @@
-import { createCardInstance, createRandomDeck } from "./cardData";
+import { createCardInstance } from "./cardData";
+import {
+  advanceToNextDecision,
+  applyAction,
+  assignRandomTestDecksToDuel,
+  createDuel,
+  getLegalActions,
+  runPassiveBoardFillerOpponentTurn,
+  serializeDuel,
+  type DeckList,
+  type DuelAction,
+  type DuelState,
+  type OpponentBehavior,
+  type Rng,
+  type SerializedCard,
+} from "./engine";
 import type {
   CardAction,
   CardCategory,
@@ -13,6 +28,7 @@ import type {
 } from "./types";
 
 export const PHASES: Phase[] = ["DP", "SP", "M1", "BP", "M2", "EP"];
+export const ACTION_PHASES: Phase[] = ["M1", "BP", "M2", "EP"];
 export const MAX_HAND_SLOTS = 6;
 export const ZONE_COUNT = 5;
 
@@ -25,48 +41,55 @@ export const PHASE_INFO: Record<Phase, { short: string; full: string }> = {
   EP: { short: "End", full: "End Phase" },
 };
 
-export function createInitialGameState(cards: CardRecord[]): GameState {
-  const deck = createRandomDeck(cards, 40);
-  const hand = deck.slice(0, 5);
-  const remainingDeck = deck.slice(5);
+export type LegalPlacementAction = Extract<DuelAction, { type: "play-card" }>;
+type ProjectionMeta = Pick<GameState, "selectedCardId" | "lastDrawnCardId" | "lastPlacedCardId"> &
+  Partial<Pick<GameState, "opponentBehavior" | "opponentTargetMonsterCount">>;
 
-  return {
-    player: {
-      lp: 8000,
-      deck: remainingDeck,
-      hand,
-      monsterZones: emptyZones(),
-      spellTrapZones: emptyZones(),
-      graveyard: [],
-      banished: [],
-    },
-    opponent: {
-      lp: 8000,
-      monsterZones: [false, true, false, true, false],
-      spellTrapZones: [true, false, false, false, true],
-      deckCount: 35,
-      graveyardCount: 0,
-      banishedCount: 0,
-    },
-    phase: "DP",
-    turn: 1,
-    selectedCardId: hand[0]?.instanceId ?? null,
-    actionLog: [
-      {
-        id: crypto.randomUUID(),
-        message: "Duel test initialized. Drew opening hand.",
-      },
-    ],
-    lastDrawnCardId: hand[hand.length - 1]?.instanceId ?? null,
+interface CreateInitialGameStateOptions {
+  decks?: Partial<Record<"P1" | "P2", DeckList>>;
+  opponentBehavior?: OpponentBehavior;
+  opponentTargetMonsterCount?: number;
+  rng?: Rng;
+  seed?: string;
+  suppressWarnings?: boolean;
+}
+
+export function createInitialGameState(cards: CardRecord[], options: CreateInitialGameStateOptions = {}): GameState {
+  if (cards.length === 0) {
+    return createEmptyGameState();
+  }
+
+  const assignment = options.decks ? null : assignRandomTestDecksToDuel(cards, options.rng);
+  const opponentBehavior = options.opponentBehavior ?? "none";
+  const opponentTargetMonsterCount = options.opponentTargetMonsterCount ?? 3;
+
+  if (assignment?.warnings.length && !options.suppressWarnings) {
+    console.warn(assignment.warnings.join("\n"));
+  }
+
+  const engine = createDuel({
+    cards,
+    mode: opponentBehavior === "passive-board-filler" ? "match" : "solo",
+    seed: options.seed ?? crypto.randomUUID(),
+    decks: options.decks ?? assignment?.decks,
+  });
+  const beforeHand = engine.players.P1.hand.map((card) => card.instanceId);
+  const readyEngine = advanceToNextDecision(engine, "P1").state;
+  const drawnCard = readyEngine.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
+
+  return projectEngineToGameState(readyEngine, {
+    selectedCardId: readyEngine.players.P1.hand[0]?.instanceId ?? null,
+    lastDrawnCardId: drawnCard?.instanceId ?? null,
     lastPlacedCardId: null,
-  };
+    opponentBehavior,
+    opponentTargetMonsterCount,
+  });
 }
 
 /**
- * Dev-only board seed. Populates every visual state in one shot — face-up and
- * face-down field cards, an activated spell, occupied Graveyard and Banished
- * piles, and a selected pile card — so a single screenshot verifies layout work
- * without clicking through actions. Activated via `?scenario=demo` (see App.tsx).
+ * Dev-only board seed. Populates every visual state in one shot for screenshot
+ * layout testing. Gameplay actions after loading the demo resync from the
+ * engine's normal opening state.
  */
 export function createDemoGameState(cards: CardRecord[]): GameState {
   const base = createInitialGameState(cards);
@@ -131,84 +154,157 @@ export function createDemoGameState(cards: CardRecord[]): GameState {
     actionLog: [
       {
         id: crypto.randomUUID(),
-        message: "Demo scenario loaded — every board state populated for visual testing.",
+        message: "Demo scenario loaded - every board state populated for visual testing.",
       },
     ],
   };
 }
 
 export function drawCard(state: GameState): GameState {
-  if (state.player.deck.length === 0) {
-    return addLog(state, "Deck is empty.");
-  }
-
-  if (state.player.hand.length >= MAX_HAND_SLOTS) {
-    return addLog(state, "Hand display is full.");
-  }
-
-  const [drawnCard, ...deck] = state.player.deck;
-  const hand = [...state.player.hand, drawnCard];
-
-  return addLog(
-    {
-      ...state,
-      player: {
-        ...state.player,
-        deck,
-        hand,
-      },
-      selectedCardId: drawnCard.instanceId,
-      lastDrawnCardId: drawnCard.instanceId,
-      lastPlacedCardId: null,
-    },
-    `Drew ${drawnCard.card.name}.`,
-  );
-}
-
-export function advancePhase(state: GameState): GameState {
-  const currentIndex = PHASES.indexOf(state.phase);
-
-  // The End Phase is the final step of a turn; advancing past it is handled by
-  // endTurn() rather than wrapping back to the Draw Phase here.
-  if (currentIndex >= PHASES.length - 1) {
+  if (!state.engine) {
     return state;
   }
 
-  const nextPhase = PHASES[currentIndex + 1];
+  const beforeHand = state.engine.players.P1.hand.map((card) => card.instanceId);
+  const result = applyAction(state.engine, { type: "draw", playerId: "P1" });
+  const drawnCard = result.state.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
 
-  return addLog(
-    {
-      ...state,
-      phase: nextPhase,
-    },
-    `Entered ${PHASE_INFO[nextPhase].full}.`,
-  );
+  return projectEngineToGameState(result.state, {
+    selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
+    lastDrawnCardId: drawnCard?.instanceId ?? null,
+    lastPlacedCardId: null,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
+}
+
+export function advancePhase(state: GameState): GameState {
+  return continueTurnFlow(state);
+}
+
+export function continueTurnFlow(state: GameState): GameState {
+  if (!state.engine) {
+    return state;
+  }
+
+  const beforeHand = state.engine.players.P1.hand.map((card) => card.instanceId);
+  let engine: DuelState;
+
+  if (state.phase === "M1") {
+    engine = canEnterBattle(state)
+      ? applyAction(state.engine, { type: "advance-phase", playerId: "P1" }).state
+      : applyAction(state.engine, { type: "end-turn", playerId: "P1" }).state;
+  } else if (state.phase === "BP") {
+    engine = applyAction(state.engine, { type: "advance-phase", playerId: "P1" }).state;
+  } else if (state.phase === "M2") {
+    engine = applyAction(state.engine, { type: "end-turn", playerId: "P1" }).state;
+  } else {
+    engine = applyAction(state.engine, {
+      type: state.phase === "EP" ? "end-turn" : "advance-phase",
+      playerId: "P1",
+    }).state;
+  }
+
+  engine = runConfiguredOpponentBehavior(engine, state);
+
+  const nextDecision = advanceToNextDecision(engine, "P1").state;
+  const drawnCard = nextDecision.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
+
+  return projectEngineToGameState(nextDecision, {
+    selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
+    lastDrawnCardId: drawnCard?.instanceId ?? null,
+    lastPlacedCardId: null,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
 }
 
 export function endTurn(state: GameState): GameState {
-  const nextTurn = state.turn + 1;
-  const turnStarted = addLog(
-    {
-      ...state,
-      phase: "DP",
-      turn: nextTurn,
-    },
-    `Turn ${nextTurn} begins.`,
+  if (!state.engine) {
+    return state;
+  }
+
+  const ended = applyAction(state.engine, { type: "end-turn", playerId: "P1" }).state;
+  const afterOpponent = runConfiguredOpponentBehavior(ended, state);
+  const beforeHand = afterOpponent.players.P1.hand.map((card) => card.instanceId);
+  const nextDecision = advanceToNextDecision(afterOpponent, "P1").state;
+  const drawnCard = nextDecision.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
+
+  return projectEngineToGameState(nextDecision, {
+    selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
+    lastDrawnCardId: drawnCard?.instanceId ?? null,
+    lastPlacedCardId: null,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
+}
+
+export function canEnterBattle(state: GameState): boolean {
+  if (!state.engine || state.engine.phase !== "M1") {
+    return false;
+  }
+
+  return state.engine.players.P1.monsterZones.some(
+    (zone) => zone && !zone.faceDown && zone.position === "attack" && !zone.instance.attackedThisTurn,
+  );
+}
+
+export function getTurnFlowActionLabel(state: GameState): string {
+  if (state.phase === "M1") {
+    return canEnterBattle(state) ? "Battle Phase" : "End Turn";
+  }
+
+  if (state.phase === "BP") {
+    return "End Battle";
+  }
+
+  if (state.phase === "M2" || state.phase === "EP") {
+    return "End Turn";
+  }
+
+  return "Continue";
+}
+
+export function getLegalPlacementsForCard(state: GameState, cardId: string | null): LegalPlacementAction[] {
+  if (!state.engine || !cardId) {
+    return [];
+  }
+
+  return getLegalActions(state.engine, "P1").filter(
+    (action): action is LegalPlacementAction => action.type === "play-card" && action.instanceId === cardId,
+  );
+}
+
+export function getUnavailableHandCardIds(state: GameState): string[] {
+  if (!state.engine) {
+    return [];
+  }
+
+  const playableCardIds = new Set(
+    getLegalActions(state.engine, "P1")
+      .filter((action): action is LegalPlacementAction => action.type === "play-card")
+      .map((action) => action.instanceId),
   );
 
-  // Auto-draw for the new turn. drawCard already guards an empty deck and a
-  // full hand, logging the reason when it cannot draw.
-  return drawCard(turnStarted);
+  return state.player.hand
+    .filter((card) => !playableCardIds.has(card.instanceId))
+    .map((card) => card.instanceId);
 }
 
 export function setPhase(state: GameState, phase: Phase): GameState {
-  return addLog(
-    {
-      ...state,
-      phase,
-    },
-    `Jumped to ${PHASE_INFO[phase].full}.`,
-  );
+  if (!state.engine) {
+    return state;
+  }
+
+  const result = applyAction(state.engine, { type: "set-phase", playerId: "P1", phase });
+
+  return projectEngineToGameState(result.state, {
+    selectedCardId: state.selectedCardId,
+    lastDrawnCardId: null,
+    lastPlacedCardId: null,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
 }
 
 export function setLifePoints(
@@ -216,19 +312,25 @@ export function setLifePoints(
   side: "player" | "opponent",
   value: number,
 ): GameState {
-  const lp = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
-
-  if (side === "player") {
-    return addLog(
-      { ...state, player: { ...state.player, lp } },
-      `Player 1 Life Points set to ${lp.toLocaleString()}.`,
-    );
+  if (!state.engine) {
+    return state;
   }
 
-  return addLog(
-    { ...state, opponent: { ...state.opponent, lp } },
-    `Player 2 Life Points set to ${lp.toLocaleString()}.`,
-  );
+  const targetPlayerId = side === "player" ? "P1" : "P2";
+  const result = applyAction(state.engine, {
+    type: "set-life-points",
+    playerId: "P1",
+    targetPlayerId,
+    value,
+  });
+
+  return projectEngineToGameState(result.state, {
+    selectedCardId: state.selectedCardId,
+    lastDrawnCardId: state.lastDrawnCardId,
+    lastPlacedCardId: state.lastPlacedCardId,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
 }
 
 export function placeSelectedCard(
@@ -236,118 +338,47 @@ export function placeSelectedCard(
   action: CardAction,
   zoneKind: ZoneKind,
   index: number,
+  tributeInstanceIds: string[] = [],
 ): GameState {
-  const cardId = state.selectedCardId;
-
-  if (!cardId) {
+  if (!state.engine || !state.selectedCardId) {
     return state;
   }
 
-  const location = findCardLocation(state.player, cardId);
-
-  if (!location || location.area !== "hand") {
-    return state;
-  }
-
-  const instance = state.player.hand[location.index];
-  const requiredKind: ZoneKind = instance.card.category === "Monster" ? "monster" : "spellTrap";
-
-  // Card-to-slot compatibility: monsters only go to monster zones, spells/traps to S/T zones.
-  if (requiredKind !== zoneKind) {
-    return state;
-  }
-
-  const targetZones =
-    zoneKind === "monster" ? state.player.monsterZones : state.player.spellTrapZones;
-
-  if (targetZones[index]) {
-    return state;
-  }
-
-  const zoneCard: ZoneCard = {
-    instance,
-    faceDown: action === "set",
-    stance: action === "summon" ? "attack" : action === "activate" ? "activated" : "set",
-  };
-
-  const player = removeCardFromPlayer(state.player, cardId);
-  const nextZones = [...targetZones];
-  nextZones[index] = zoneCard;
-
-  const nextPlayer =
-    zoneKind === "monster"
-      ? { ...player, monsterZones: nextZones }
-      : { ...player, spellTrapZones: nextZones };
-
-  const actionLabel =
-    action === "summon" ? "Summoned" : action === "activate" ? "Activated" : "Set";
-
-  return addLog(
-    {
-      ...state,
-      player: nextPlayer,
-      selectedCardId: instance.instanceId,
-      lastPlacedCardId: instance.instanceId,
-      lastDrawnCardId: null,
-    },
-    `${actionLabel} ${instance.card.name}.`,
+  const result = applyAction(state.engine, {
+    type: "play-card",
+    playerId: "P1",
+    instanceId: state.selectedCardId,
+    intent: action,
+    zoneKind,
+    zoneIndex: index,
+    tributeInstanceIds,
+  });
+  const placed = result.events.some((event) =>
+    [
+      "monster-set",
+      "monster-summoned",
+      "monster-tribute-set",
+      "monster-tribute-summoned",
+      "spell-trap-set",
+      "card-activated",
+    ].includes(event.type),
   );
+
+  return projectEngineToGameState(result.state, {
+    selectedCardId: state.selectedCardId,
+    lastDrawnCardId: null,
+    lastPlacedCardId: placed ? state.selectedCardId : null,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
 }
 
 export function sendSelectedToGraveyard(state: GameState): GameState {
-  const selected = getSelectedCardInstance(state);
-
-  if (!selected) {
-    return state;
-  }
-
-  const player = removeCardFromPlayer(state.player, selected.instanceId);
-  const graveCard: ZoneCard = {
-    instance: selected,
-    faceDown: false,
-    stance: "activated",
-  };
-
-  return addLog(
-    {
-      ...state,
-      player: {
-        ...player,
-        graveyard: [graveCard, ...player.graveyard],
-      },
-      selectedCardId: selected.instanceId,
-      lastPlacedCardId: null,
-    },
-    `Sent ${selected.card.name} to the Graveyard.`,
-  );
+  return moveSelectedCard(state, "graveyard");
 }
 
 export function banishSelected(state: GameState): GameState {
-  const selected = getSelectedCardInstance(state);
-
-  if (!selected) {
-    return state;
-  }
-
-  const player = removeCardFromPlayer(state.player, selected.instanceId);
-  const banishedCard: ZoneCard = {
-    instance: selected,
-    faceDown: false,
-    stance: "activated",
-  };
-
-  return addLog(
-    {
-      ...state,
-      player: {
-        ...player,
-        banished: [banishedCard, ...player.banished],
-      },
-      selectedCardId: selected.instanceId,
-      lastPlacedCardId: null,
-    },
-    `Banished ${selected.card.name}.`,
-  );
+  return moveSelectedCard(state, "banished");
 }
 
 export function getSelectedCardInstance(state: GameState): CardInstance | null {
@@ -392,18 +423,114 @@ export function findCardLocation(player: PlayerState, cardId: string): CardLocat
   return null;
 }
 
-function removeCardFromPlayer(player: PlayerState, cardId: string): PlayerState {
+function moveSelectedCard(state: GameState, destination: "graveyard" | "banished"): GameState {
+  if (!state.engine || !state.selectedCardId) {
+    return state;
+  }
+
+  const result = applyAction(state.engine, {
+    type: "move-card",
+    playerId: "P1",
+    instanceId: state.selectedCardId,
+    destination,
+  });
+
+  return projectEngineToGameState(result.state, {
+    selectedCardId: state.selectedCardId,
+    lastDrawnCardId: null,
+    lastPlacedCardId: null,
+    opponentBehavior: state.opponentBehavior,
+    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+  });
+}
+
+function runConfiguredOpponentBehavior(engine: DuelState, state: GameState): DuelState {
+  if (state.opponentBehavior !== "passive-board-filler" || engine.activePlayer !== "P2") {
+    return engine;
+  }
+
+  return runPassiveBoardFillerOpponentTurn(engine, {
+    targetMonsterCount: state.opponentTargetMonsterCount ?? 3,
+  }).state;
+}
+
+function projectEngineToGameState(
+  engine: DuelState,
+  meta: ProjectionMeta,
+): GameState {
+  const serialized = serializeDuel(engine, "P1");
+
   return {
-    ...player,
-    hand: player.hand.filter((instance) => instance.instanceId !== cardId),
-    monsterZones: player.monsterZones.map((zoneCard) =>
-      zoneCard?.instance.instanceId === cardId ? null : zoneCard,
-    ),
-    spellTrapZones: player.spellTrapZones.map((zoneCard) =>
-      zoneCard?.instance.instanceId === cardId ? null : zoneCard,
-    ),
-    graveyard: player.graveyard.filter((zoneCard) => zoneCard.instance.instanceId !== cardId),
-    banished: player.banished.filter((zoneCard) => zoneCard.instance.instanceId !== cardId),
+    engine,
+    opponentBehavior: meta.opponentBehavior ?? "none",
+    opponentTargetMonsterCount: meta.opponentTargetMonsterCount ?? 3,
+    player: {
+      lp: serialized.players.P1.lp,
+      deck: engine.players.P1.deck.map(toCardInstance),
+      hand: engine.players.P1.hand.map(toCardInstance),
+      monsterZones: engine.players.P1.monsterZones.map(toZoneCard),
+      spellTrapZones: engine.players.P1.spellTrapZones.map(toZoneCard),
+      graveyard: engine.players.P1.graveyard.map(toZoneCard).filter(isZoneCard),
+      banished: engine.players.P1.banished.map(toZoneCard).filter(isZoneCard),
+    },
+    opponent: {
+      lp: serialized.players.P2.lp,
+      monsterZones: serialized.players.P2.monsterZones.map(toOpponentZone),
+      spellTrapZones: serialized.players.P2.spellTrapZones.map(toOpponentZone),
+      deckCount: serialized.players.P2.deckCount,
+      graveyardCount: serialized.players.P2.graveyard.length,
+      banishedCount: serialized.players.P2.banished.length,
+    },
+    phase: serialized.phase,
+    turn: serialized.turn,
+    selectedCardId: meta.selectedCardId,
+    actionLog: serialized.events
+      .slice(-8)
+      .reverse()
+      .map((event) => ({
+        id: event.id,
+        message: event.message,
+      })),
+    lastDrawnCardId: meta.lastDrawnCardId,
+    lastPlacedCardId: meta.lastPlacedCardId,
+  };
+}
+
+function toCardInstance(instance: { instanceId: string; card: CardRecord }): CardInstance {
+  return {
+    instanceId: instance.instanceId,
+    card: instance.card,
+  };
+}
+
+function toZoneCard(zone: DuelState["players"]["P1"]["monsterZones"][number]): ZoneCard | null {
+  if (!zone) {
+    return null;
+  }
+
+  return {
+    instance: toCardInstance(zone.instance),
+    faceDown: zone.faceDown,
+    stance: zone.status === "activated" ? "activated" : zone.faceDown ? "set" : "attack",
+  };
+}
+
+function toOpponentZone(zone: SerializedCard | null): ZoneCard | boolean | null {
+  if (!zone) {
+    return null;
+  }
+
+  if (!zone.card) {
+    return true;
+  }
+
+  return {
+    instance: {
+      instanceId: zone.instanceId,
+      card: zone.card,
+    },
+    faceDown: zone.faceDown,
+    stance: zone.status === "activated" ? "activated" : zone.faceDown ? "set" : "attack",
   };
 }
 
@@ -433,19 +560,40 @@ function findCardInstance(player: PlayerState, cardId: string): CardInstance | n
   return player.banished[location.index].instance;
 }
 
+function createEmptyGameState(): GameState {
+  return {
+    opponentBehavior: "none",
+    opponentTargetMonsterCount: 3,
+    player: {
+      lp: 8000,
+      deck: [],
+      hand: [],
+      monsterZones: emptyZones(),
+      spellTrapZones: emptyZones(),
+      graveyard: [],
+      banished: [],
+    },
+    opponent: {
+      lp: 8000,
+      monsterZones: [false, false, false, false, false],
+      spellTrapZones: [false, false, false, false, false],
+      deckCount: 0,
+      graveyardCount: 0,
+      banishedCount: 0,
+    },
+    phase: "DP",
+    turn: 1,
+    selectedCardId: null,
+    actionLog: [],
+    lastDrawnCardId: null,
+    lastPlacedCardId: null,
+  };
+}
+
 function emptyZones(): Array<ZoneCard | null> {
   return Array.from({ length: ZONE_COUNT }, () => null);
 }
 
-function addLog(state: GameState, message: string): GameState {
-  return {
-    ...state,
-    actionLog: [
-      {
-        id: crypto.randomUUID(),
-        message,
-      },
-      ...state.actionLog,
-    ].slice(0, 8),
-  };
+function isZoneCard(zone: ZoneCard | null): zone is ZoneCard {
+  return Boolean(zone);
 }

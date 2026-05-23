@@ -35,6 +35,37 @@ export function getCardImageUrl(card: CardRecord): string {
   return `${IMAGE_BASE_URL}/${fileName}`;
 }
 
+export interface SummonProfile {
+  kind: "normal" | "tribute" | "special";
+  tributes: number;
+  specialType: string | null;
+}
+
+/**
+ * Classifies how a monster card is summoned (GOAT-era rules): Level 1-4 → Normal
+ * Summon; Level 5-6 / 7+ → Tribute Summon with 1 / 2 tributes; Fusion / Ritual /
+ * Nomi cards → Special Summon. Returns null for non-monsters.
+ */
+export function getSummonProfile(card: CardRecord): SummonProfile | null {
+  if (card.category !== "Monster" || !card.monster) {
+    return null;
+  }
+
+  if (card.classifications.includes("Fusion")) {
+    return { kind: "special", tributes: 0, specialType: "Fusion" };
+  }
+  if (card.classifications.includes("Ritual")) {
+    return { kind: "special", tributes: 0, specialType: "Ritual" };
+  }
+  if (/cannot be normal summoned/i.test(card.text)) {
+    return { kind: "special", tributes: 0, specialType: null };
+  }
+
+  const level = card.monster.level ?? 0;
+  const tributes = level >= 7 ? 2 : level >= 5 ? 1 : 0;
+  return { kind: tributes > 0 ? "tribute" : "normal", tributes, specialType: null };
+}
+
 export function createRandomDeck(cards: CardRecord[], deckSize = 40): CardInstance[] {
   const legalCopies = cards.flatMap((card) => {
     const maxCopies = card.legality?.max_copies ?? 0;

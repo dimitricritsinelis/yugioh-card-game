@@ -1,22 +1,38 @@
-import { RotateCcw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Maximize, Minimize, RotateCcw } from "lucide-react";
 
 interface ActionPanelProps {
   onReset: () => void;
 }
 
 export function ActionPanel({ onReset }: ActionPanelProps) {
-  return (
-    <section className="stone-panel action-panel" aria-label="Actions">
-      <div className="panel-title">
-        <p className="eyebrow">Command</p>
-      </div>
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
-      <div className="action-grid">
-        <button type="button" onClick={onReset}>
-          <RotateCcw size={16} />
-          Reset
-        </button>
-      </div>
-    </section>
+  useEffect(() => {
+    const sync = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }
+
+  return (
+    <div className="action-panel">
+      <button type="button" className="rail-btn" onClick={toggleFullscreen}>
+        {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+        {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+      </button>
+      <button type="button" className="rail-btn" onClick={onReset}>
+        <RotateCcw size={15} />
+        Reset Duel
+      </button>
+    </div>
   );
 }

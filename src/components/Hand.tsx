@@ -7,6 +7,7 @@ interface HandProps {
   cards: CardInstance[];
   selectedCardId: string | null;
   lastDrawnCardId: string | null;
+  unavailableCardIds: string[];
   onSelectCard: (cardId: string) => void;
   onSendToGraveyard: () => void;
   onBanish: () => void;
@@ -16,12 +17,14 @@ export function Hand({
   cards,
   selectedCardId,
   lastDrawnCardId,
+  unavailableCardIds,
   onSelectCard,
   onSendToGraveyard,
   onBanish,
 }: HandProps) {
   const fanCenter = (cards.length - 1) / 2;
   const hasSelection = Boolean(selectedCardId);
+  const unavailableCards = new Set(unavailableCardIds);
 
   function fanStyle(index: number): CSSProperties & Record<string, string> {
     const offset = index - fanCenter;
@@ -59,7 +62,13 @@ export function Hand({
         <div className="hand-fan">
           {cards.map((card, index) => (
             <div
-              className={`hand-card ${card.instanceId === lastDrawnCardId ? "drawn" : ""}`}
+              className={[
+                "hand-card",
+                card.instanceId === lastDrawnCardId ? "drawn" : "",
+                unavailableCards.has(card.instanceId) ? "unavailable" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               key={card.instanceId}
               style={fanStyle(index)}
             >

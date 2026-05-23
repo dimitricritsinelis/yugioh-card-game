@@ -8,7 +8,7 @@ The app should:
 
 - Load real card metadata from `/yugioh_cards/cards.json`.
 - Render card images from local files only: `/yugioh_cards/images/...`.
-- Randomly sample and shuffle a local 40-card test deck from legal cards.
+- Randomly assign Yugi or Seto Kaiba GOAT test decks for local default matches.
 - Show a playable single-player test board with hand, zones, LP, phase controls, action log, and card detail HUD.
 - Keep cards as the visual centerpiece. Board chrome should support readability, not compete with the cards.
 
@@ -43,6 +43,9 @@ The frontend serves it through:
 - `public/yugioh_cards`
 
 Use local image paths only. Do not hotlink external card images.
+
+Default duel presets live in `src/engine/goatTestDecks.ts`. They are local
+prototype test decks, not ranked or competitive deck defaults.
 
 ## Quick Test Loop
 

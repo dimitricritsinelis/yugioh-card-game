@@ -68,8 +68,8 @@ export interface PlayerState {
 
 export interface OpponentState {
   lp: number;
-  monsterZones: boolean[];
-  spellTrapZones: boolean[];
+  monsterZones: Array<ZoneCard | boolean | null>;
+  spellTrapZones: Array<ZoneCard | boolean | null>;
   deckCount: number;
   graveyardCount: number;
   banishedCount: number;
@@ -81,6 +81,9 @@ export interface ActionLogEntry {
 }
 
 export interface GameState {
+  engine?: import("./engine").DuelState;
+  opponentBehavior?: import("./engine").OpponentBehavior;
+  opponentTargetMonsterCount?: number;
   player: PlayerState;
   opponent: OpponentState;
   phase: Phase;

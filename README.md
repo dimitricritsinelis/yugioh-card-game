@@ -21,6 +21,13 @@ npm run build
 npm run preview
 ```
 
+## Test Decks
+
+Default local duels use character-themed GOAT test decks from the local card
+bundle: `Yugi Goat Test Deck` and `Seto Kaiba Goat Test Deck`. These are for
+prototype coverage and visual/gameplay testing, not ranked or competitive deck
+defaults.
+
 For scraper maintenance:
 
 ```sh
