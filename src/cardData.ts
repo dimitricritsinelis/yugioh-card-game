@@ -66,32 +66,6 @@ export function getSummonProfile(card: CardRecord): SummonProfile | null {
   return { kind: tributes > 0 ? "tribute" : "normal", tributes, specialType: null };
 }
 
-export function createRandomDeck(cards: CardRecord[], deckSize = 40): CardInstance[] {
-  const legalCopies = cards.flatMap((card) => {
-    const maxCopies = card.legality?.max_copies ?? 0;
-
-    if (card.legality?.goat_world_pool !== true || maxCopies <= 0) {
-      return [];
-    }
-
-    return Array.from({ length: maxCopies }, () => card);
-  });
-
-  const shuffledPool = shuffle(legalCopies);
-  return shuffledPool.slice(0, deckSize).map(createCardInstance);
-}
-
-export function shuffle<T>(items: T[]): T[] {
-  const copy = [...items];
-
-  for (let index = copy.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
-  }
-
-  return copy;
-}
-
 export function createCardInstance(card: CardRecord): CardInstance {
   instanceCounter += 1;
 

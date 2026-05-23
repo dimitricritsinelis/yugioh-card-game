@@ -27,9 +27,7 @@ import type {
   ZoneKind,
 } from "./types";
 
-export const PHASES: Phase[] = ["DP", "SP", "M1", "BP", "M2", "EP"];
 export const ACTION_PHASES: Phase[] = ["M1", "BP", "M2", "EP"];
-export const MAX_HAND_SLOTS = 6;
 export const ZONE_COUNT = 5;
 
 export const PHASE_INFO: Record<Phase, { short: string; full: string }> = {
@@ -160,28 +158,6 @@ export function createDemoGameState(cards: CardRecord[]): GameState {
   };
 }
 
-export function drawCard(state: GameState): GameState {
-  if (!state.engine) {
-    return state;
-  }
-
-  const beforeHand = state.engine.players.P1.hand.map((card) => card.instanceId);
-  const result = applyAction(state.engine, { type: "draw", playerId: "P1" });
-  const drawnCard = result.state.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
-
-  return projectEngineToGameState(result.state, {
-    selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
-    lastDrawnCardId: drawnCard?.instanceId ?? null,
-    lastPlacedCardId: null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
-}
-
-export function advancePhase(state: GameState): GameState {
-  return continueTurnFlow(state);
-}
-
 export function continueTurnFlow(state: GameState): GameState {
   if (!state.engine) {
     return state;
@@ -208,26 +184,6 @@ export function continueTurnFlow(state: GameState): GameState {
   engine = runConfiguredOpponentBehavior(engine, state);
 
   const nextDecision = advanceToNextDecision(engine, "P1").state;
-  const drawnCard = nextDecision.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
-
-  return projectEngineToGameState(nextDecision, {
-    selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
-    lastDrawnCardId: drawnCard?.instanceId ?? null,
-    lastPlacedCardId: null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
-}
-
-export function endTurn(state: GameState): GameState {
-  if (!state.engine) {
-    return state;
-  }
-
-  const ended = applyAction(state.engine, { type: "end-turn", playerId: "P1" }).state;
-  const afterOpponent = runConfiguredOpponentBehavior(ended, state);
-  const beforeHand = afterOpponent.players.P1.hand.map((card) => card.instanceId);
-  const nextDecision = advanceToNextDecision(afterOpponent, "P1").state;
   const drawnCard = nextDecision.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
 
   return projectEngineToGameState(nextDecision, {
@@ -289,22 +245,6 @@ export function getUnavailableHandCardIds(state: GameState): string[] {
   return state.player.hand
     .filter((card) => !playableCardIds.has(card.instanceId))
     .map((card) => card.instanceId);
-}
-
-export function setPhase(state: GameState, phase: Phase): GameState {
-  if (!state.engine) {
-    return state;
-  }
-
-  const result = applyAction(state.engine, { type: "set-phase", playerId: "P1", phase });
-
-  return projectEngineToGameState(result.state, {
-    selectedCardId: state.selectedCardId,
-    lastDrawnCardId: null,
-    lastPlacedCardId: null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
 }
 
 export function setLifePoints(

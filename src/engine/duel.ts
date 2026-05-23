@@ -8,7 +8,6 @@ import type {
   DuelCardInstance,
   DuelEvent,
   DuelPlayerState,
-  DuelPrompt,
   DuelResult,
   DuelState,
   DuelZoneCard,
