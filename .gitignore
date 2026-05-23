@@ -1,5 +1,4 @@
 node_modules/
-card_scraper/node_modules/
 
 dist*
 *.tsbuildinfo
@@ -8,9 +7,6 @@ dist*
 .vercel/
 
 .DS_Store
-card_scraper/artifacts/
 
 # Keep the runtime card bundle checked in for the Vite app.
-!yugioh_cards/
-!yugioh_cards/**
 !public/yugioh_cards

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import cardsJson from "../../../yugioh_cards/cards.json";
+import cardsJson from "../../../public/yugioh_cards/cards.json";
 import {
   ACTION_PHASES,
   canEnterBattle,

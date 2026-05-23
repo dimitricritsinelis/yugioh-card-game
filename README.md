@@ -4,12 +4,12 @@ Lightweight Vite/React prototype for a GOAT-era Yu-Gi-Oh duel screen. The app lo
 
 ## Runtime Assets
 
-The canonical runtime bundle is kept in `yugioh_cards/`:
+The card bundle is checked in under `public/yugioh_cards/` and served by Vite at `/yugioh_cards/`:
 
-- `cards.json`
-- `images/{passcode}_{slugified-card-name}.webp`
+- `public/yugioh_cards/cards.json`
+- `public/yugioh_cards/images/{passcode}_{slugified-card-name}.webp`
 
-The Vite app serves those files through the `public/yugioh_cards` symlink. Do not replace these paths with external image hotlinks.
+Do not replace these paths with external image hotlinks.
 
 ## Development
 
@@ -28,14 +28,6 @@ bundle: `Yugi Goat Test Deck` and `Seto Kaiba Goat Test Deck`. These are for
 prototype coverage and visual/gameplay testing, not ranked or competitive deck
 defaults.
 
-For scraper maintenance:
-
-```sh
-npm --prefix card_scraper ci
-npm --prefix card_scraper run typecheck
-npm --prefix card_scraper test
-```
-
 ## Vercel
 
 Use the standard Vite settings:
@@ -44,4 +36,4 @@ Use the standard Vite settings:
 - Output directory: `dist`
 - Install command: `npm ci`
 
-Generated folders, dependency installs, local OS metadata, and scraper artifacts are excluded by `.gitignore` and `.vercelignore`. The local card bundle remains included for the first deploy target.
+Generated folders, dependency installs, and local OS metadata are excluded by `.gitignore` and `.vercelignore`. The local card bundle under `public/yugioh_cards/` remains included for the deploy target.

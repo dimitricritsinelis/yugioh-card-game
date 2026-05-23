@@ -33,14 +33,10 @@ Priorities:
 
 ## Data Notes
 
-The canonical card bundle is:
+The card bundle lives under `public/yugioh_cards/` and is served by Vite at `/yugioh_cards/`:
 
-- `yugioh_cards/cards.json`
-- `yugioh_cards/images/{passcode}_{slugified-card-name}.webp`
-
-The frontend serves it through:
-
-- `public/yugioh_cards`
+- `public/yugioh_cards/cards.json`
+- `public/yugioh_cards/images/{passcode}_{slugified-card-name}.webp`
 
 Use local image paths only. Do not hotlink external card images.
 
