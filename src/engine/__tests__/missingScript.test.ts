@@ -10,7 +10,7 @@ const cards = cardsJson as CardRecord[];
 const GRACEFUL_CHARITY_ID = "79571449";
 
 describe("missing card effect scripts", () => {
-  it("emits an explicit missing-effect event and leaves state unchanged for unsupported Spell activation", () => {
+  it("emits an explicit missing-effect event without moving cards for unsupported Spell activation", () => {
     const state = deepFreeze(advanceToM1(createFixtureDuel([GRACEFUL_CHARITY_ID], { allowUnsupportedCards: true }).state));
     const before = JSON.parse(JSON.stringify(state));
     const gracefulCharity = requireHandCard(state, "P1", GRACEFUL_CHARITY_ID);
@@ -20,9 +20,9 @@ describe("missing card effect scripts", () => {
       instanceId: gracefulCharity.instanceId,
     });
 
-    expect(result.state).toBe(state);
-    expect(result.state).toEqual(before);
-    expect(result.state.eventIds).toEqual(state.eventIds);
+    expect(result.state).not.toBe(state);
+    expect({ ...result.state, eventIds: state.eventIds }).toEqual(before);
+    expect(result.state.eventIds).toEqual([...state.eventIds, "evt-0016"]);
     expect(result.events).toHaveLength(1);
     expect(result.events[0]).toMatchObject({
       type: "effect-not-implemented",

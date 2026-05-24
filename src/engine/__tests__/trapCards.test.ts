@@ -28,7 +28,7 @@ describe("supported Trap card scripts", () => {
     });
     const resolved = reduceDuel(attack.state, { type: "resolve-chain", playerId: "P1" });
 
-    expect(getCardCoverage(cardById(MIRROR_FORCE_ID)).status).toBe("implemented");
+    expect(getCardCoverage(cardById(MIRROR_FORCE_ID)).status).toBe("goatTemplate");
     expect(attack.state.chain[0]).toMatchObject({ playerId: "P2", cardId: MIRROR_FORCE_ID });
     expect(resolved.errors).toEqual([]);
     expect(resolved.state.players.P1.monsterZones[0]).toBeNull();
@@ -88,8 +88,8 @@ describe("supported Trap card scripts", () => {
     const magicJammer = cardById(MAGIC_JAMMER_ID);
     const result = validateDeck(deckWithPriority([WABOKU_ID]), [...cards]);
 
-    expect(getCardCoverage(waboku).status).toBe("unsupported");
-    expect(getCardCoverage(magicJammer).status).toBe("unsupported");
+    expect(getCardCoverage(waboku).status).toBe("goatUnsupported");
+    expect(getCardCoverage(magicJammer).status).toBe("goatUnsupported");
     expect(isPlayableCard(WABOKU_ID, cards)).toBe(false);
     expect(result.valid).toBe(false);
     expect(result.errors.join(" ")).toContain("Waboku is not supported in playable decks.");

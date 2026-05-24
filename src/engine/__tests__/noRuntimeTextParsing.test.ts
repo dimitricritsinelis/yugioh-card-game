@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-const engineSources = import.meta.glob("../**/*.ts", {
+const runtimeSources = import.meta.glob([
+  "../**/*.ts",
+  "../../cardData.ts",
+  "../../gameLogic.ts",
+], {
   eager: true,
   import: "default",
   query: "?raw",
@@ -28,7 +32,7 @@ describe("no runtime card-text parsing guard", () => {
 
   it("uses card text only in catalog/display normalization files", () => {
     const textUsageFiles = new Set(
-      sourceOffenders([cardTextUsagePattern], isEngineModule),
+      sourceOffenders([cardTextUsagePattern], isScannedModule),
     );
 
     expect([...textUsageFiles].sort()).toEqual([...allowedTextUsageFiles].sort());
@@ -43,19 +47,19 @@ function sourceOffenders(
   patterns: readonly RegExp[],
   includePath: (path: string) => boolean,
 ): string[] {
-  return Object.entries(engineSources)
+  return Object.entries(runtimeSources)
     .filter(([path]) => includePath(path))
     .filter(([, source]) => patterns.some((pattern) => pattern.test(source)))
     .map(([path]) => path)
     .sort();
 }
 
-function isEngineModule(path: string): boolean {
+function isScannedModule(path: string): boolean {
   return !path.includes("/__tests__/") && !path.endsWith(".test.ts");
 }
 
 function isRuntimeModule(path: string): boolean {
-  return isEngineModule(path) && !path.includes("/testing/");
+  return isScannedModule(path) && !path.includes("/testing/");
 }
 
 function isRuntimeBehaviorModule(path: string): boolean {

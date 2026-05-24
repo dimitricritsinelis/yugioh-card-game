@@ -153,6 +153,10 @@ function script(cardId: string, effectId: string, spellSpeed: SpellSpeed): CardS
         kind: "quick",
         implemented: true,
         spellSpeed,
+        resolution: {
+          steps: [],
+          sendSourceToGraveyard: false,
+        },
       }),
     ]),
   });

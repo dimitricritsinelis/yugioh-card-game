@@ -68,10 +68,11 @@ Every `cards.json` card gets exactly one status:
 - `goatTemplate`
 - `goatCustom`
 - `goatForbiddenButScripted`
+- `goatDeckBlocked`
 - `goatUnsupported`
 - `notInGoatPool`
 
-The final GOAT-legal unsupported count must be zero. Forbidden cards remain deck-blocked but should still be scripted for tests and development duels. No card can be marked implemented without a script or template and tests.
+The manifest is an accountability gate, not a claim that every card is automated. The final GOAT-legal unsupported count must be zero before strict final acceptance can be true. Forbidden cards remain deck-blocked in normal playable mode even when scripted, but may be exercised by explicit tests and development duels. No card can be marked implemented without a script or template and tests.
 
 ## Testing Policy
 

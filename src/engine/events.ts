@@ -24,6 +24,7 @@ export type EngineEventType =
   | "targets-chosen"
   | "chain-link-created"
   | "chain-resolved"
+  | "effect-resolved-without-effect"
   | "prompt-created"
   | "prompt-resolved"
   | "player-lost"
@@ -211,6 +212,16 @@ export interface ChainResolvedEvent extends BaseEngineEvent {
   readonly sourceInstanceId?: InstanceId;
 }
 
+export interface EffectResolvedWithoutEffectEvent extends BaseEngineEvent {
+  readonly type: "effect-resolved-without-effect";
+  readonly playerId: PlayerId;
+  readonly chainLinkId: string;
+  readonly sourceInstanceId: InstanceId;
+  readonly cardId: string;
+  readonly effectId: string;
+  readonly reason: string;
+}
+
 export interface PromptCreatedEvent extends BaseEngineEvent {
   readonly type: "prompt-created";
   readonly playerId: PlayerId;
@@ -272,6 +283,7 @@ export type EngineEvent =
   | TargetsChosenEvent
   | ChainLinkCreatedEvent
   | ChainResolvedEvent
+  | EffectResolvedWithoutEffectEvent
   | PromptCreatedEvent
   | PromptResolvedEvent
   | PlayerLostEvent

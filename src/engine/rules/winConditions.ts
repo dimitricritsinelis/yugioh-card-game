@@ -56,7 +56,9 @@ export function isExodiaWinEnabled(implementedCardIds: readonly CardId[]): boole
 export function implementedCardIdsFromRegistry(
   registry: CardCoverageRegistry = ENGINE_CARD_COVERAGE,
 ): readonly CardId[] {
-  return Object.entries(registry).flatMap(([cardId, status]) => (status === "implemented" ? [cardId] : []));
+  return Object.entries(registry).flatMap(([cardId, status]) =>
+    status === "goatTemplate" || status === "goatCustom" || status === "goatForbiddenButScripted" ? [cardId] : [],
+  );
 }
 
 export function opponentOf(playerId: PlayerId): PlayerId {

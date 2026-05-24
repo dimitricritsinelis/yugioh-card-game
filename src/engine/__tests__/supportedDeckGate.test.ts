@@ -15,24 +15,24 @@ describe("supported playable deck gate", () => {
   it("treats vanilla Normal Monsters as playable through the vanilla template", () => {
     const battleOx = cardByName("Battle Ox");
 
-    expect(getCardCoverage(battleOx).status).toBe("vanilla");
+    expect(getCardCoverage(battleOx).status).toBe("goatVanilla");
     expect(isPlayableCard(battleOx.passcode, cards)).toBe(true);
   });
 
   it("treats explicitly implemented effect cards as playable", () => {
     const potOfGreed = cardByName("Pot of Greed");
     const registry: CardCoverageRegistry = {
-      [potOfGreed.passcode]: "implemented",
+      [potOfGreed.passcode]: "goatTemplate",
     };
 
-    expect(getCardCoverage(potOfGreed, registry).status).toBe("implemented");
+    expect(getCardCoverage(potOfGreed, registry).status).toBe("goatTemplate");
     expect(isPlayableCard(potOfGreed.passcode, cards, registry)).toBe(true);
   });
 
   it("blocks unsupported cards from playable deck validation", () => {
     const result = validateDeck(deckWithPriority(["Graceful Charity"]), cards);
 
-    expect(getCardCoverage(cardByName("Graceful Charity")).status).toBe("unsupported");
+    expect(getCardCoverage(cardByName("Graceful Charity")).status).toBe("goatUnsupported");
     expect(result.valid).toBe(false);
     expect(result.errors.join(" ")).toContain("Graceful Charity is not supported in playable decks.");
   });
@@ -41,7 +41,7 @@ describe("supported playable deck gate", () => {
     const thousandEyes = cardByName("Thousand-Eyes Restrict");
     const result = validateDeck(deckWithPriority(["Thousand-Eyes Restrict"]), cards);
 
-    expect(getCardCoverage(thousandEyes).status).toBe("blockedNoExtraDeck");
+    expect(getCardCoverage(thousandEyes).status).toBe("goatDeckBlocked");
     expect(isPlayableCard(thousandEyes.passcode, cards)).toBe(false);
     expect(result.valid).toBe(false);
     expect(result.errors.join(" ")).toContain("Extra/Fusion Decks are outside playable scope");
@@ -50,7 +50,7 @@ describe("supported playable deck gate", () => {
   it("blocks cards outside the current playable scope", () => {
     const forbiddenCard = cardByName("Butterfly Dagger - Elma");
 
-    expect(getCardCoverage(forbiddenCard).status).toBe("blockedByScope");
+    expect(getCardCoverage(forbiddenCard).status).toBe("notInGoatPool");
     expect(isPlayableCard(forbiddenCard.passcode, cards)).toBe(false);
   });
 

@@ -739,17 +739,17 @@ describe("custom staple card scripts", () => {
   it("keeps unimplemented custom staples blocked from playable decks", () => {
     const result = validateDeck(deckWithPriority([METAMORPHOSIS_ID]), cards);
 
-    expect(getCardCoverage(cardById(BREAKER_THE_MAGICAL_WARRIOR_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(TRIBE_INFECTING_VIRUS_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(SINISTER_SERPENT_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(DD_WARRIOR_LADY_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(INJECTION_FAIRY_LILY_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(REFLECT_BOUNDER_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(JINZO_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(RING_OF_DESTRUCTION_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(CALL_OF_THE_HAUNTED_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(PREMATURE_BURIAL_ID)).status).toBe("implemented");
-    expect(getCardCoverage(cardById(SNATCH_STEAL_ID)).status).toBe("implemented");
+    expect(getCardCoverage(cardById(BREAKER_THE_MAGICAL_WARRIOR_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(TRIBE_INFECTING_VIRUS_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(SINISTER_SERPENT_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(DD_WARRIOR_LADY_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(INJECTION_FAIRY_LILY_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(REFLECT_BOUNDER_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(JINZO_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(RING_OF_DESTRUCTION_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(CALL_OF_THE_HAUNTED_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(PREMATURE_BURIAL_ID)).status).toBe("goatCustom");
+    expect(getCardCoverage(cardById(SNATCH_STEAL_ID)).status).toBe("goatCustom");
     expect(isPlayableCard(BREAKER_THE_MAGICAL_WARRIOR_ID, cards)).toBe(true);
     expect(isPlayableCard(TRIBE_INFECTING_VIRUS_ID, cards)).toBe(true);
     expect(isPlayableCard(SINISTER_SERPENT_ID, cards)).toBe(true);

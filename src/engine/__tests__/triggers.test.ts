@@ -153,6 +153,7 @@ describe("simple trigger collection", () => {
 
   it("collects mandatory triggers after chain resolution", () => {
     const state = stateWithScripts([
+      noOpScript(TURN_PLAYER_TRIGGER_ID, "existing-effect"),
       triggerScript(CHAIN_TRIGGER_ID, "after-chain-trigger", "chain-resolved", ["chain-resolved"]),
     ]);
     const chainTriggerState: DuelState = {
@@ -239,7 +240,29 @@ function triggerScript(
         trigger: {
           timing,
           eventTypes,
-          optional,
+        optional,
+        },
+        resolution: {
+          steps: [],
+          sendSourceToGraveyard: false,
+        },
+      },
+    ],
+  };
+}
+
+function noOpScript(cardId: string, effectId: string): CardScript {
+  return {
+    cardId,
+    effects: [
+      {
+        id: effectId,
+        kind: "ignition",
+        implemented: true,
+        spellSpeed: 1,
+        resolution: {
+          steps: [],
+          sendSourceToGraveyard: false,
         },
       },
     ],

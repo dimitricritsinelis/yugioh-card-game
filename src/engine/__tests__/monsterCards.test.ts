@@ -27,7 +27,7 @@ describe("supported Monster card scripts", () => {
     const flipped = reduceDuel(state, { type: "flip-summon", playerId: "P1", instanceId: monster.instanceId });
     const resolved = reduceDuel(flipped.state, { type: "resolve-chain", playerId: "P1" });
 
-    expect(getCardCoverage(cardById(DEKOICHI_ID)).status).toBe("implemented");
+    expect(getCardCoverage(cardById(DEKOICHI_ID)).status).toBe("goatTemplate");
     expect(resolved.errors).toEqual([]);
     expect(resolved.events.some((event) => event.type === "card-drawn")).toBe(true);
   });
@@ -105,8 +105,8 @@ describe("supported Monster card scripts", () => {
     const mysticTomato = cardById(MYSTIC_TOMATO_ID);
     const result = validateDeck(deckWithPriority([SANGAN_ID]), [...cards]);
 
-    expect(getCardCoverage(sangan).status).toBe("unsupported");
-    expect(getCardCoverage(mysticTomato).status).toBe("unsupported");
+    expect(getCardCoverage(sangan).status).toBe("goatUnsupported");
+    expect(getCardCoverage(mysticTomato).status).toBe("goatUnsupported");
     expect(isPlayableCard(SANGAN_ID, cards)).toBe(false);
     expect(result.valid).toBe(false);
     expect(result.errors.join(" ")).toContain("Sangan is not supported in playable decks.");

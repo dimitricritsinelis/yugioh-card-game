@@ -124,6 +124,8 @@ export type DuelAction =
       tributeInstanceIds?: string[];
       tributeCount?: number;
       requiredTributeInstanceIds?: string[];
+      targetRefs?: ZoneRef[];
+      targetPlayerIds?: PlayerId[];
     }
   | {
       type: "move-card";

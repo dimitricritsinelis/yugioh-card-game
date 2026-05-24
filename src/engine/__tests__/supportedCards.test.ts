@@ -63,7 +63,7 @@ describe("initial supported playable card pool", () => {
       AXE_RAIDER_ID,
     ]) {
       expect(supported.has(cardId)).toBe(true);
-      expect(getCardCoverage(cardById(cardId)).status).toBe("vanilla");
+      expect(getCardCoverage(cardById(cardId)).status).toBe("goatVanilla");
     }
 
     for (const cardId of [
@@ -79,6 +79,12 @@ describe("initial supported playable card pool", () => {
       MAGICIAN_OF_FAITH_ID,
       OLD_VINDICTIVE_MAGICIAN_ID,
       EXILED_FORCE_ID,
+    ]) {
+      expect(supported.has(cardId)).toBe(true);
+      expect(getCardCoverage(cardById(cardId)).status).toBe("goatTemplate");
+    }
+
+    for (const cardId of [
       BREAKER_THE_MAGICAL_WARRIOR_ID,
       TRIBE_INFECTING_VIRUS_ID,
       SINISTER_SERPENT_ID,
@@ -92,7 +98,7 @@ describe("initial supported playable card pool", () => {
       SNATCH_STEAL_ID,
     ]) {
       expect(supported.has(cardId)).toBe(true);
-      expect(getCardCoverage(cardById(cardId)).status).toBe("implemented");
+      expect(getCardCoverage(cardById(cardId)).status).toBe("goatCustom");
     }
 
     for (const cardId of [
