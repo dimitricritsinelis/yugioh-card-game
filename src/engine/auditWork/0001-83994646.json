@@ -1,0 +1,113 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "83994646",
+    "passcode": "83994646",
+    "slug": "4-starred-ladybug-of-doom",
+    "name": "4-Starred Ladybug of Doom",
+    "file_name": "83994646_4-starred-ladybug-of-doom.webp",
+    "category": "Monster",
+    "classifications": [
+      "Effect",
+      "Flip"
+    ],
+    "text": "FLIP: Destroy all face-up Level 4 monsters on your opponent's side of the field.",
+    "monster": {
+      "attribute": "WIND",
+      "type": "Insect",
+      "level": 3,
+      "atk": 800,
+      "def": 1200
+    },
+    "spell_trap": null,
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F83994646.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/_next/image?url=%2Fgoat-db%2F83994646.webp&w=640&q=75",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/83994646_4-starred-ladybug-of-doom.webp",
+      "file_name": "83994646_4-starred-ladybug-of-doom.webp",
+      "content_type": null,
+      "byte_size": 49893,
+      "width": 512,
+      "height": 747,
+      "sha256": "666eb1cb4d115914b977e5c796c12d04771e77c8a1be727d7c5b8a7584d203a5",
+      "status": "cached",
+      "error": null
+    },
+    "related_cards": [
+      "Insect Soldiers of the Sky",
+      "Ultimate Insect LV3",
+      "Bladefly",
+      "Bombardment Beetle",
+      "Empress Mantis",
+      "Flying Kamakiri #1",
+      "Flying Kamakiri #2",
+      "Girochin Kuwagata"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/4-starred-ladybug-of-doom",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/4-starred-ladybug-of-doom.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 1,
+    "passcode": "83994646",
+    "name": "4-Starred Ladybug of Doom",
+    "category": "Monster",
+    "classifications": [
+      "Effect",
+      "Flip"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-50-29-065Z-c17d0e39-f958-47a7-9fae-71dd58f90793",
+    "localTextHash": "84c4ad2c74de95987b7dbdc61e4b6f79bf110ad4d4b779aff548ebdd488df97a",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:50:29.084Z",
+    "completedAt": null,
+    "attempts": 6,
+    "mechanicTags": [
+      "destroy",
+      "effect",
+      "flip",
+      "monster"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/4-starred-ladybug-of-doom",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-50-29-065Z-c17d0e39-f958-47a7-9fae-71dd58f90793. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0001-83994646-4-starred-ladybug-of-doom.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "checkpoint": "src/engine/auditWork/checkpoints/0001-83994646.json",
+    "manifest": "parent runner merges checkpoint into src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}

@@ -8,6 +8,7 @@ interface HandProps {
   selectedCardId: string | null;
   lastDrawnCardId: string | null;
   unavailableCardIds: string[];
+  debugMoveEnabled?: boolean;
   onSelectCard: (cardId: string) => void;
   onSendToGraveyard: () => void;
   onBanish: () => void;
@@ -18,6 +19,7 @@ export function Hand({
   selectedCardId,
   lastDrawnCardId,
   unavailableCardIds,
+  debugMoveEnabled = false,
   onSelectCard,
   onSendToGraveyard,
   onBanish,
@@ -37,26 +39,28 @@ export function Hand({
 
   return (
     <section className="hand-dock player-accent" aria-label="Player hand">
-      <div className="hand-actions">
-        <button
-          type="button"
-          className="hand-action-btn"
-          onClick={onSendToGraveyard}
-          disabled={!hasSelection}
-        >
-          <Send size={15} />
-          Graveyard
-        </button>
-        <button
-          type="button"
-          className="hand-action-btn"
-          onClick={onBanish}
-          disabled={!hasSelection}
-        >
-          <Ban size={15} />
-          Banish
-        </button>
-      </div>
+      {debugMoveEnabled ? (
+        <div className="hand-actions" aria-label="Debug card movement actions">
+          <button
+            type="button"
+            className="hand-action-btn"
+            onClick={onSendToGraveyard}
+            disabled={!hasSelection}
+          >
+            <Send size={15} />
+            Debug GY
+          </button>
+          <button
+            type="button"
+            className="hand-action-btn"
+            onClick={onBanish}
+            disabled={!hasSelection}
+          >
+            <Ban size={15} />
+            Debug Banish
+          </button>
+        </div>
+      ) : null}
 
       <div className="hand-main">
         <div className="hand-fan">

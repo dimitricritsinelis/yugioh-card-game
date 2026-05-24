@@ -1,0 +1,105 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "28596933",
+    "passcode": "28596933",
+    "slug": "a-wingbeat-of-giant-dragon",
+    "name": "A Wingbeat of Giant Dragon",
+    "file_name": "28596933_a-wingbeat-of-giant-dragon.webp",
+    "category": "Spell",
+    "classifications": [
+      "Normal"
+    ],
+    "text": "Return 1 Level 5 or higher Dragon-Type monster you control to the hand, and if you do, destroy all Spell and Trap Cards on the field.",
+    "monster": null,
+    "spell_trap": {
+      "icon": "Normal"
+    },
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F28596933.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/_next/image?url=%2Fgoat-db%2F28596933.webp&w=640&q=75",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/28596933_a-wingbeat-of-giant-dragon.webp",
+      "file_name": "28596933_a-wingbeat-of-giant-dragon.webp",
+      "content_type": "image/jpeg",
+      "byte_size": 52201,
+      "width": 512,
+      "height": 747,
+      "sha256": "6ae4ec902e5a69a021129d529c7136a7c507c31a6bb5820aa2f99c2feb923fa7",
+      "status": "downloaded",
+      "error": null
+    },
+    "related_cards": [
+      "7",
+      "7 Completed",
+      "A Deal with Dark Ruler",
+      "A Feather of the Phoenix",
+      "A Legendary Ocean",
+      "Abyssal Designator",
+      "Acid Rain",
+      "After the Struggle"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/a-wingbeat-of-giant-dragon",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/a-wingbeat-of-giant-dragon.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 13,
+    "passcode": "28596933",
+    "name": "A Wingbeat of Giant Dragon",
+    "category": "Spell",
+    "classifications": [
+      "Normal"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba",
+    "localTextHash": "e1905c7981450762cd5702f0128a6ffaed0531a7920f7d5bca9773893a31876d",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:40:37.986Z",
+    "completedAt": null,
+    "attempts": 2,
+    "mechanicTags": [
+      "destroy",
+      "normal",
+      "spell"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/a-wingbeat-of-giant-dragon",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0013-28596933-a-wingbeat-of-giant-dragon.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "manifest": "src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}

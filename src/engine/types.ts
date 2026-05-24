@@ -1,4 +1,5 @@
 import type { CardAction, CardRecord, Phase, ZoneKind } from "../types";
+import type { ZoneRef } from "./core/cardRefs";
 
 export type PlayerId = "P1" | "P2";
 export type TurnMode = "match" | "solo";
@@ -25,6 +26,7 @@ export interface CreateDuelConfig {
   firstPlayer?: PlayerId;
   mode?: TurnMode;
   decks?: Partial<Record<PlayerId, DeckList>>;
+  allowUnsupportedCards?: boolean;
 }
 
 export interface DuelCardInstance {
@@ -64,6 +66,8 @@ export interface ChainLink {
   id: string;
   playerId: PlayerId;
   sourceInstanceId: string;
+  cardId?: string;
+  effectId?: string;
   spellSpeed: 1 | 2 | 3;
   targetInstanceIds: string[];
 }
@@ -71,10 +75,11 @@ export interface ChainLink {
 export interface DuelPrompt {
   id: string;
   playerId: PlayerId;
-  kind: "priority" | "target" | "discard" | "choice";
+  kind: "priority" | "target" | "discard" | "tribute" | "choice" | "chain-response" | "yes-no";
   message: string;
   min: number;
   max: number;
+  metadata?: Readonly<Record<string, string>>;
 }
 
 export interface DuelEvent {
@@ -87,6 +92,7 @@ export interface DuelState {
   id: string;
   seed: string;
   mode: TurnMode;
+  coreState?: import("./core/state").DuelState;
   turn: number;
   phase: Phase;
   activePlayer: PlayerId;
@@ -130,6 +136,18 @@ export type DuelAction =
       playerId: PlayerId;
       attackerInstanceId: string;
       defenderInstanceId?: string;
+    }
+  | { type: "pass-priority"; playerId: PlayerId }
+  | { type: "resolve-chain"; playerId: PlayerId }
+  | {
+      type: "answer-prompt";
+      playerId: PlayerId;
+      promptId: string;
+      choiceIds?: string[];
+      targetRefs?: ZoneRef[];
+      targetPlayerIds?: PlayerId[];
+      discardInstanceIds?: string[];
+      tributeInstanceIds?: string[];
     }
   | { type: "set-life-points"; playerId: PlayerId; targetPlayerId: PlayerId; value: number };
 
@@ -186,3 +204,75 @@ export interface DeckValidationResult {
   valid: boolean;
   errors: string[];
 }
+
+export type {
+  LocatedCardRef as CoreLocatedCardRef,
+  InvariantResult as CoreInvariantResult,
+} from "./core/invariants";
+export type {
+  CardInZone as CoreCardInZone,
+  LocatedCard as CoreLocatedCard,
+  RemoveFromZoneResult as CoreRemoveFromZoneResult,
+  ZoneCardOptions as CoreZoneCardOptions,
+} from "./core/zones";
+export type {
+  CardInstance as CoreCardInstance,
+  CardVisibility as CoreCardVisibility,
+  FaceState as CoreFaceState,
+  InstanceId as CoreInstanceId,
+  MonsterPosition as CoreMonsterPosition,
+  ZoneCard as CoreZoneCard,
+  ZoneKind as CoreZoneKind,
+  ZoneRef as CoreZoneRef,
+} from "./core/cardRefs";
+export type {
+  DuelState as CoreDuelState,
+  PlayerState as CorePlayerState,
+} from "./core/state";
+export type { ChainLink as CoreChainLink } from "./rules/chain";
+export type {
+  ActivationRestrictionSpec as CoreActivationRestrictionSpec,
+  AttackRestrictionSpec as CoreAttackRestrictionSpec,
+  BattleStat as CoreBattleStat,
+  ContinuousEffectDefinition as CoreContinuousEffectDefinition,
+  ContinuousEffectSource as CoreContinuousEffectSource,
+  EffectNegationSpec as CoreEffectNegationSpec,
+  EffectTargetController as CoreEffectTargetController,
+  EffectTargetFilter as CoreEffectTargetFilter,
+  MonsterStatInput as CoreMonsterStatInput,
+  StatModifierSpec as CoreStatModifierSpec,
+} from "./effects/continuous";
+export type {
+  ActiveLingeringEffect as CoreActiveLingeringEffect,
+  LingeringEffectDefinition as CoreLingeringEffectDefinition,
+} from "./effects/lingering";
+export type {
+  DestructionReason as CoreDestructionReason,
+  DestructionReplacementAction as CoreDestructionReplacementAction,
+  DestructionReplacementInput as CoreDestructionReplacementInput,
+  DestructionReplacementResult as CoreDestructionReplacementResult,
+  DestructionReplacementSpec as CoreDestructionReplacementSpec,
+  ReplacementEffectDefinition as CoreReplacementEffectDefinition,
+} from "./effects/replacement";
+export type {
+  DamageStepEffectKind as CoreDamageStepEffectKind,
+  DamageStepEffectPermission as CoreDamageStepEffectPermission,
+  DamageStepState as CoreDamageStepState,
+  DamageStepSubstep as CoreDamageStepSubstep,
+} from "./rules/damageStep";
+export type {
+  PriorityState as CorePriorityState,
+  PriorityWindowReason as CorePriorityWindowReason,
+  PriorityWindowStatus as CorePriorityWindowStatus,
+} from "./rules/priority";
+export type { EngineCommand as CoreEngineCommand } from "./commands";
+export type { EngineError as CoreEngineError, EngineErrorCode as CoreEngineErrorCode } from "./errors";
+export type {
+  EngineEvent as CoreTypedEngineEvent,
+  EngineEventType as CoreTypedEngineEventType,
+} from "./events";
+export type {
+  EngineEvent as CoreEngineEvent,
+  EnginePrompt as CoreEnginePrompt,
+  EngineResult as CoreEngineResult,
+} from "./result";

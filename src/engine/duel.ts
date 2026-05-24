@@ -1,13 +1,23 @@
 import type { CardRecord, Phase, ZoneKind } from "../types";
+import { isPlayableCard } from "./cards/coverage";
+import type { CardInstance as CoreCardInstance, ZoneCard as CoreZoneCard } from "./core/cardRefs";
+import type { DuelState as CoreDuelState } from "./core/state";
 import { validateDeck } from "./deckValidation";
 import { shuffleSeeded } from "./random";
+import { createDuel as createCoreDuel, reduceDuel } from "./reducer";
+import type { EngineEvent } from "./events";
+import { createPriorityWindow, PASS_PRIORITY } from "./rules/priority";
+import type { ChainLink as CoreChainLink } from "./rules/chain";
+import type { EnginePrompt } from "./result";
 import type {
+  ChainLink,
   CreateDuelConfig,
   DeckList,
   DuelAction,
   DuelCardInstance,
   DuelEvent,
   DuelPlayerState,
+  DuelPrompt,
   DuelResult,
   DuelState,
   DuelZoneCard,
@@ -28,37 +38,19 @@ export function createDuel(config: CreateDuelConfig): DuelState {
   const mode = config.mode ?? "match";
   const p1Deck = config.decks?.P1 ?? createRandomLegalDeck(config.cards, `${seed}:P1`);
   const p2Deck = config.decks?.P2 ?? createRandomLegalDeck(config.cards, `${seed}:P2`);
-
-  assertValidDeck(p1Deck, config.cards, "P1");
-  assertValidDeck(p2Deck, config.cards, "P2");
-
-  const p1Main = makeInstances("P1", p1Deck.main, config.cards);
-  const p2Main = makeInstances("P2", p2Deck.main, config.cards);
-
-  return {
-    id: `duel-${seed}`,
+  const core = createCoreDuel({
+    cards: config.cards,
+    decks: {
+      P1: p1Deck,
+      P2: p2Deck,
+    },
     seed,
-    mode,
-    turn: 1,
-    phase: "DP",
-    activePlayer: firstPlayer,
-    priorityPlayer: firstPlayer,
-    battleSubstep: "none",
-    players: {
-      P1: createPlayer("P1", p1Main, p1Deck, config.cards),
-      P2: createPlayer("P2", p2Main, p2Deck, config.cards),
-    },
-    chain: [],
-    pendingPrompts: [],
-    events: [
-      createEvent("duel-created", "Duel initialized. Each player drew an opening hand of 5 cards."),
-    ],
-    turnFlags: {
-      drawnThisTurn: false,
-      battlePhaseConducted: false,
-    },
-    winner: null,
-  };
+    firstPlayer,
+    allowUnsupportedCards: config.allowUnsupportedCards,
+    shuffleDecks: false,
+  });
+
+  return legacyStateFromCore(core.state, config.cards, mode, core.events);
 }
 
 export function getLegalActions(state: DuelState, playerId: PlayerId): DuelAction[] {
@@ -141,13 +133,30 @@ export function getLegalActions(state: DuelState, playerId: PlayerId): DuelActio
   }
 
   if (state.phase === "BP") {
+    const opponent = state.players[opponentOf(playerId)];
+    const defenderZones = opponent.monsterZones
+      .map((zone, zoneIndex) => ({ zone, zoneIndex }))
+      .filter((entry): entry is { zone: DuelZoneCard; zoneIndex: number } => Boolean(entry.zone));
+
     for (const zone of player.monsterZones) {
       if (zone && !zone.faceDown && zone.position === "attack" && !zone.instance.attackedThisTurn) {
-        actions.push({
-          type: "attack",
-          playerId,
-          attackerInstanceId: zone.instance.instanceId,
-        });
+        if (defenderZones.length === 0) {
+          actions.push({
+            type: "attack",
+            playerId,
+            attackerInstanceId: zone.instance.instanceId,
+          });
+          continue;
+        }
+
+        for (const defender of defenderZones) {
+          actions.push({
+            type: "attack",
+            playerId,
+            attackerInstanceId: zone.instance.instanceId,
+            defenderInstanceId: defender.zone.instance.instanceId,
+          });
+        }
       }
     }
   }
@@ -185,6 +194,15 @@ export function applyAction(state: DuelState, action: DuelAction): DuelResult {
       break;
     case "attack":
       handleAttack(draft, action.playerId, action.attackerInstanceId, action.defenderInstanceId);
+      break;
+    case "pass-priority":
+      handleCoreCommand(draft, { type: PASS_PRIORITY, playerId: action.playerId });
+      break;
+    case "resolve-chain":
+      handleCoreCommand(draft, action);
+      break;
+    case "answer-prompt":
+      handleCoreCommand(draft, action);
       break;
     case "set-life-points":
       setLifePoints(draft, action.targetPlayerId, action.value);
@@ -692,6 +710,7 @@ function playSpellTrap(
   }
 
   addEvent(state, "card-activated", `${player.id} activated ${instance.card.name}.`);
+  addEvent(state, "effect-not-implemented", `${instance.card.name} has no implemented effect script yet.`);
 }
 
 function handleMoveCard(
@@ -818,6 +837,266 @@ function resolveBattle(
   addEvent(state, "battle-resolved", `${attacker.instance.card.name} battled ${currentDefender.instance.card.name}.`);
 }
 
+function legacyStateFromCore(
+  coreState: CoreDuelState,
+  cards: readonly CardRecord[],
+  mode: CreateDuelConfig["mode"] = "match",
+  events: readonly EngineEvent[] = [],
+): DuelState {
+  const cardByPasscode = new Map(cards.map((card) => [card.passcode, card]));
+
+  return {
+    id: coreState.id,
+    seed: coreState.seed,
+    mode,
+    coreState,
+    turn: coreState.turn,
+    phase: coreState.phase,
+    activePlayer: coreState.activePlayer,
+    priorityPlayer: coreState.priorityPlayer,
+    battleSubstep: "none",
+    players: {
+      P1: legacyPlayerFromCore(coreState.players.P1, cardByPasscode),
+      P2: legacyPlayerFromCore(coreState.players.P2, cardByPasscode),
+    },
+    chain: coreState.chain.map(legacyChainLinkFromCore),
+    pendingPrompts: coreState.pendingPromptIds
+      .map((promptId) => coreState.prompts[promptId])
+      .filter(isEnginePrompt)
+      .map(legacyPromptFromCore),
+    events: events.map(legacyEventFromCore),
+    turnFlags: {
+      drawnThisTurn: false,
+      battlePhaseConducted: false,
+    },
+    winner: coreState.winner,
+  };
+}
+
+function syncLegacyStateFromCoreResult(
+  state: DuelState,
+  coreState: CoreDuelState,
+  events: readonly EngineEvent[],
+): void {
+  const cards = collectCardRecordsFromLegacyState(state);
+  const next = legacyStateFromCore(coreState, cards, state.mode, []);
+
+  state.coreState = coreState;
+  state.turn = next.turn;
+  state.phase = next.phase;
+  state.activePlayer = next.activePlayer;
+  state.priorityPlayer = next.priorityPlayer;
+  state.players = next.players;
+  state.winner = next.winner;
+  state.chain = coreState.chain.map(legacyChainLinkFromCore);
+  state.pendingPrompts = coreState.pendingPromptIds
+    .map((promptId) => coreState.prompts[promptId])
+    .filter(isEnginePrompt)
+    .map(legacyPromptFromCore);
+  state.events = [...state.events, ...events.map(legacyEventFromCore)].slice(-40);
+}
+
+function handleCoreCommand(state: DuelState, command: Parameters<typeof reduceDuel>[1]): void {
+  const result = reduceDuel(coreStateFromLegacy(state), command);
+
+  syncLegacyStateFromCoreResult(state, result.state, result.events);
+}
+
+function coreStateFromLegacy(state: DuelState): CoreDuelState {
+  const priority =
+    state.coreState?.priority.holder === state.priorityPlayer
+      ? state.coreState.priority
+      : createPriorityWindow(state.priorityPlayer, "phase-start");
+
+  return {
+    id: state.id,
+    seed: state.seed,
+    turn: state.turn,
+    phase: state.phase,
+    activePlayer: state.activePlayer,
+    priorityPlayer: state.priorityPlayer,
+    priority,
+    players: {
+      P1: corePlayerFromLegacy(state.players.P1),
+      P2: corePlayerFromLegacy(state.players.P2),
+    },
+    chain: state.coreState?.chain ?? [],
+    prompts: Object.fromEntries(
+      state.pendingPrompts.map((prompt) => [
+        prompt.id,
+        {
+          id: prompt.id,
+          playerId: prompt.playerId,
+          kind: prompt.kind === "priority" ? "chain-response" : prompt.kind,
+          message: prompt.message,
+          min: prompt.min,
+          max: prompt.max,
+        },
+      ]),
+    ),
+    pendingPromptIds: state.pendingPrompts.map((prompt) => prompt.id),
+    eventIds: state.events.map((event) => event.id),
+    winner: state.winner,
+  };
+}
+
+function legacyPlayerFromCore(
+  player: CoreDuelState["players"][PlayerId],
+  cardByPasscode: ReadonlyMap<string, CardRecord>,
+): DuelPlayerState {
+  return {
+    id: player.id,
+    lp: player.lp,
+    deck: player.mainDeck.map((card) => legacyInstanceFromCore(card, cardByPasscode)),
+    hand: player.hand.map((card) => legacyInstanceFromCore(card, cardByPasscode)),
+    monsterZones: player.monsterZones.map((card) => legacyZoneFromCore(card, cardByPasscode)),
+    spellTrapZones: player.spellTrapZones.map((card) => legacyZoneFromCore(card, cardByPasscode)),
+    graveyard: player.graveyard.map((card) => legacyZoneFromCore(card, cardByPasscode)).filter(isDuelZoneCard),
+    banished: player.banished.map((card) => legacyZoneFromCore(card, cardByPasscode)).filter(isDuelZoneCard),
+    sideDeck: [],
+    extraDeck: [],
+    normalSummonUsed: player.normalSummonUsed,
+    lost: player.lost,
+  };
+}
+
+function corePlayerFromLegacy(player: DuelPlayerState): CoreDuelState["players"][PlayerId] {
+  return {
+    id: player.id,
+    lp: player.lp,
+    mainDeck: player.deck.map(coreInstanceFromLegacy),
+    hand: player.hand.map(coreInstanceFromLegacy),
+    monsterZones: player.monsterZones.map(coreZoneFromLegacy),
+    spellTrapZones: player.spellTrapZones.map(coreZoneFromLegacy),
+    graveyard: player.graveyard.map(coreZoneFromLegacy).filter(isCoreZoneCard),
+    banished: player.banished.map(coreZoneFromLegacy).filter(isCoreZoneCard),
+    fieldZone: null,
+    normalSummonUsed: player.normalSummonUsed,
+    lost: player.lost,
+  };
+}
+
+function legacyInstanceFromCore(
+  instance: CoreCardInstance,
+  cardByPasscode: ReadonlyMap<string, CardRecord>,
+): DuelCardInstance {
+  const card = cardByPasscode.get(instance.cardId);
+
+  if (!card) {
+    throw new Error(`Unknown card passcode ${instance.cardId}.`);
+  }
+
+  return {
+    instanceId: instance.instanceId,
+    card,
+    owner: instance.owner,
+    controller: instance.controller,
+    createdTurn: 0,
+    summonedTurn: null,
+    positionChangedTurn: null,
+    attackedThisTurn: false,
+  };
+}
+
+function coreInstanceFromLegacy(instance: DuelCardInstance): CoreCardInstance {
+  return {
+    instanceId: instance.instanceId,
+    cardId: instance.card.passcode,
+    owner: instance.owner,
+    controller: instance.controller,
+  };
+}
+
+function legacyZoneFromCore(
+  card: CoreZoneCard | null,
+  cardByPasscode: ReadonlyMap<string, CardRecord>,
+): DuelZoneCard | null {
+  if (!card) {
+    return null;
+  }
+
+  return {
+    instance: legacyInstanceFromCore(card, cardByPasscode),
+    faceDown: card.face === "faceDown",
+    position: card.position ?? "attack",
+    status: card.face === "faceDown" ? "set" : card.position ? "summoned" : "activated",
+  };
+}
+
+function coreZoneFromLegacy(zone: DuelZoneCard | null): CoreZoneCard | null {
+  if (!zone) {
+    return null;
+  }
+
+  return {
+    ...coreInstanceFromLegacy(zone.instance),
+    face: zone.faceDown ? "faceDown" : "faceUp",
+    position: zone.position,
+    visibility: zone.faceDown ? "hidden" : "public",
+    counters: {},
+    attachments: [],
+  };
+}
+
+function legacyEventFromCore(event: EngineEvent): DuelEvent {
+  return {
+    id: event.id,
+    type: event.type,
+    message: event.message,
+  };
+}
+
+function legacyChainLinkFromCore(link: CoreChainLink): ChainLink {
+  return {
+    id: link.id,
+    playerId: link.playerId,
+    sourceInstanceId: link.sourceInstanceId,
+    cardId: link.cardId,
+    effectId: link.effectId,
+    spellSpeed: link.spellSpeed,
+    targetInstanceIds: [],
+  };
+}
+
+function legacyPromptFromCore(prompt: EnginePrompt): DuelPrompt {
+  return {
+    id: prompt.id,
+    playerId: prompt.playerId,
+    kind: prompt.kind,
+    message: prompt.message,
+    min: prompt.min,
+    max: prompt.max,
+    metadata: prompt.metadata,
+  };
+}
+
+function isEnginePrompt(prompt: EnginePrompt | undefined): prompt is EnginePrompt {
+  return Boolean(prompt);
+}
+
+function collectCardRecordsFromLegacyState(state: DuelState): CardRecord[] {
+  const cardByPasscode = new Map<string, CardRecord>();
+
+  for (const player of Object.values(state.players)) {
+    for (const instance of [...player.deck, ...player.hand]) {
+      cardByPasscode.set(instance.card.passcode, instance.card);
+    }
+
+    for (const zone of [
+      ...player.monsterZones,
+      ...player.spellTrapZones,
+      ...player.graveyard,
+      ...player.banished,
+    ]) {
+      if (zone) {
+        cardByPasscode.set(zone.instance.card.passcode, zone.instance.card);
+      }
+    }
+  }
+
+  return [...cardByPasscode.values()];
+}
+
 function createPlayer(
   id: PlayerId,
   mainDeck: DuelCardInstance[],
@@ -849,7 +1128,7 @@ function createRandomLegalDeck(cards: CardRecord[], seed: string): DeckList {
     if (
       card.legality.goat_world_pool !== true ||
       card.legality.max_copies <= 0 ||
-      card.classifications.includes("Fusion")
+      !isPlayableCard(card.passcode, cards)
     ) {
       return [];
     }
@@ -859,8 +1138,6 @@ function createRandomLegalDeck(cards: CardRecord[], seed: string): DeckList {
 
   return {
     main: shuffleSeeded(legalCopies, seed).slice(0, 40),
-    side: [],
-    extra: [],
   };
 }
 
@@ -887,8 +1164,13 @@ function makeInstances(playerId: PlayerId, passcodes: string[], cards: CardRecor
   });
 }
 
-function assertValidDeck(deck: DeckList, cards: CardRecord[], playerId: PlayerId): void {
-  const result = validateDeck(deck, cards);
+function assertValidDeck(
+  deck: DeckList,
+  cards: CardRecord[],
+  playerId: PlayerId,
+  allowUnsupportedCards: boolean,
+): void {
+  const result = validateDeck(deck, cards, { allowUnsupportedCards });
 
   if (!result.valid) {
     throw new Error(`${playerId} deck is invalid: ${result.errors.join(" ")}`);
@@ -896,6 +1178,13 @@ function assertValidDeck(deck: DeckList, cards: CardRecord[], playerId: PlayerId
 }
 
 function drawCards(state: DuelState, playerId: PlayerId, count: number): void {
+  if (state.coreState) {
+    const coreResult = reduceDuel(coreStateFromLegacy(state), { type: "draw-card", playerId, count });
+
+    syncLegacyStateFromCoreResult(state, coreResult.state, coreResult.events);
+    return;
+  }
+
   const player = state.players[playerId];
 
   for (let drawn = 0; drawn < count; drawn += 1) {
@@ -1083,13 +1372,21 @@ function monsterDef(zone: DuelZoneCard): number {
 }
 
 function canNormalSummon(player: DuelPlayerState, card: CardRecord): boolean {
-  if (player.normalSummonUsed || card.classifications.includes("Fusion")) {
+  if (player.normalSummonUsed || !isNormalSummonableMonster(card)) {
     return false;
   }
 
   const tributeCount = requiredTributes(card);
 
   return player.monsterZones.filter(Boolean).length >= tributeCount;
+}
+
+function isNormalSummonableMonster(card: CardRecord): boolean {
+  return (
+    card.category === "Monster" &&
+    !card.classifications.includes("Fusion") &&
+    !card.classifications.includes("Ritual")
+  );
 }
 
 function requiredTributes(card: CardRecord): number {
@@ -1255,5 +1552,13 @@ function isCardRecord(card: CardRecord | undefined): card is CardRecord {
 }
 
 function isSerializedCard(card: SerializedCard | null): card is SerializedCard {
+  return Boolean(card);
+}
+
+function isDuelZoneCard(card: DuelZoneCard | null): card is DuelZoneCard {
+  return Boolean(card);
+}
+
+function isCoreZoneCard(card: CoreZoneCard | null): card is CoreZoneCard {
   return Boolean(card);
 }

@@ -1,13 +1,15 @@
 import { CARD_DECK_IMAGE_URL } from "../cardData";
-import type { LegalPlacementAction } from "../gameLogic";
+import type { LegalAttackTarget, LegalPlacementAction } from "../gameLogic";
 import type { CardAction, CardInstance, GameState, ZoneKind } from "../types";
 import { CardView } from "./CardView";
 
 interface BoardProps {
   game: GameState;
   legalPlacements: LegalPlacementAction[];
+  legalAttackTargets: LegalAttackTarget[];
   onSelectCard: (cardId: string) => void;
   onPlaceCard: (placement: LegalPlacementAction) => void;
+  onAttack: (target: LegalAttackTarget) => void;
   tributeSelection: TributeSelectionView | null;
   onToggleTribute: (instanceId: string) => void;
   onCancelTribute: () => void;
@@ -23,8 +25,10 @@ interface TributeSelectionView {
 export function Board({
   game,
   legalPlacements,
+  legalAttackTargets,
   onSelectCard,
   onPlaceCard,
+  onAttack,
   tributeSelection,
   onToggleTribute,
   onCancelTribute,
@@ -55,7 +59,13 @@ export function Board({
         <DeckPile deckCount={game.opponent.deckCount} monsterRowFirst={false} />
         <div className="zone-grid">
           <ZoneRow label="Spell / Trap" accent="opponent" hiddenZones={game.opponent.spellTrapZones} />
-          <ZoneRow label="Monster" accent="opponent" hiddenZones={game.opponent.monsterZones} />
+          <ZoneRow
+            label="Monster"
+            accent="opponent"
+            hiddenZones={game.opponent.monsterZones}
+            attackTargets={legalAttackTargets}
+            onAttack={onAttack}
+          />
         </div>
         {/* Opponent rows run S/T → Monster, so banished (S/T row) sits above graveyard (monster row). */}
         <GraveBanishStack
@@ -77,8 +87,10 @@ export function Board({
             selectedCardId={game.selectedCardId}
             lastPlacedCardId={game.lastPlacedCardId}
             legalPlacements={legalPlacements}
+            attackTargets={legalAttackTargets}
             onSelectCard={onSelectCard}
             onPlaceCard={onPlaceCard}
+            onAttack={onAttack}
             tributeSelection={tributeSelection}
             onToggleTribute={onToggleTribute}
           />
@@ -270,8 +282,10 @@ interface ZoneRowProps {
   selectedCardId?: string | null;
   lastPlacedCardId?: string | null;
   legalPlacements?: LegalPlacementAction[];
+  attackTargets?: LegalAttackTarget[];
   onSelectCard?: (cardId: string) => void;
   onPlaceCard?: (placement: LegalPlacementAction) => void;
+  onAttack?: (target: LegalAttackTarget) => void;
   tributeSelection?: TributeSelectionView | null;
   onToggleTribute?: (instanceId: string) => void;
 }
@@ -285,8 +299,10 @@ function ZoneRow({
   selectedCardId,
   lastPlacedCardId,
   legalPlacements = [],
+  attackTargets = [],
   onSelectCard,
   onPlaceCard,
+  onAttack,
   tributeSelection = null,
   onToggleTribute,
 }: ZoneRowProps) {
@@ -304,12 +320,25 @@ function ZoneRow({
               )
             : [];
           const hasTributePlacement = legalZonePlacements.some((placement) => (placement.tributeCount ?? 0) > 0);
+          const directAttackTarget =
+            accent === "player" &&
+            zoneCard?.instance.instanceId === selectedCardId
+              ? attackTargets.find((target) => target.target.kind === "direct")
+              : undefined;
+          const monsterAttackTarget =
+            accent === "opponent"
+              ? attackTargets.find(
+                  (target) => target.target.kind === "monster" && target.target.zoneIndex === index,
+                )
+              : undefined;
           const showActions =
             !tributeSelection &&
             !isHidden &&
             Boolean(zoneKind) &&
             legalZonePlacements.length > 0 &&
             (!zoneCard || hasTributePlacement);
+          const showAttackTarget = !tributeSelection && Boolean(monsterAttackTarget);
+          const showDirectAttack = !tributeSelection && Boolean(directAttackTarget);
           const tributeSelected =
             Boolean(zoneCard) &&
             Boolean(tributeSelection?.selectedTributeIds.includes(zoneCard!.instance.instanceId));
@@ -327,7 +356,7 @@ function ZoneRow({
           const zoneClasses = [
             "duel-zone",
             zoneCard || isHidden ? "occupied" : "",
-            showActions ? "action-target" : "",
+            showActions || showAttackTarget || showDirectAttack ? "action-target" : "",
             tributeCandidate ? "tribute-candidate" : "",
             tributeSelected ? "tribute-selected" : "",
             tributeLocked ? "tribute-locked" : "",
@@ -373,6 +402,30 @@ function ZoneRow({
                   placements={legalZonePlacements}
                   onPlaceCard={onPlaceCard}
                 />
+              ) : null}
+
+              {showAttackTarget && monsterAttackTarget && onAttack ? (
+                <div className="zone-actions attack-actions">
+                  <button
+                    type="button"
+                    className="zone-action-btn"
+                    onClick={() => onAttack(monsterAttackTarget)}
+                  >
+                    Attack
+                  </button>
+                </div>
+              ) : null}
+
+              {showDirectAttack && directAttackTarget && onAttack ? (
+                <div className="zone-actions attack-actions">
+                  <button
+                    type="button"
+                    className="zone-action-btn"
+                    onClick={() => onAttack(directAttackTarget)}
+                  >
+                    Direct
+                  </button>
+                </div>
               ) : null}
 
               {tributeCandidate && zoneCard ? (

@@ -2,15 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { loadCards } from "./cardData";
 import {
+  attackWithSelectedCard,
+  answerActivePrompt,
   banishSelected,
   canEnterBattle,
   continueTurnFlow,
   createDemoGameState,
   createInitialGameState,
   findCardLocation,
+  getChainView,
+  getLegalAttackTargetsForCard,
   getLegalPlacementsForCard,
+  getPriorityView,
+  getPromptView,
   getTurnFlowActionLabel,
   getUnavailableHandCardIds,
+  passPriorityForPlayer,
+  resolveCurrentChain,
+  type LegalAttackTarget,
   getSelectedCardInstance,
   type LegalPlacementAction,
   placeSelectedCard,
@@ -24,6 +33,10 @@ import { Hand } from "./components/Hand";
 import { MusicPlayer } from "./components/MusicPlayer";
 import { PhaseHud } from "./components/PhaseHud";
 import { PlayerStatusCard } from "./components/PlayerStatusCard";
+import { PromptPanel } from "./components/PromptPanel";
+import { PriorityPanel } from "./components/PriorityPanel";
+import { ChainPanel } from "./components/ChainPanel";
+import { TargetSelectionOverlay } from "./components/TargetSelectionOverlay";
 import type { CardRecord } from "./types";
 
 // Dev-only: `?scenario=demo` boots a fully populated board for visual testing.
@@ -51,8 +64,10 @@ export default function App() {
   const [cards, setCards] = useState<CardRecord[]>([]);
   const [game, setGame] = useState(() => createInitialGameState([]));
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [errorTitle, setErrorTitle] = useState("Card bundle unavailable");
   const [errorMessage, setErrorMessage] = useState("");
   const [pendingTribute, setPendingTribute] = useState<PendingTributeSelection | null>(null);
+  const [promptSelectionIds, setPromptSelectionIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +79,15 @@ export default function App() {
         }
 
         setCards(loadedCards);
-        setGame(buildGameState(loadedCards));
+        try {
+          setGame(buildGameState(loadedCards));
+        } catch (error: unknown) {
+          setErrorTitle("Duel setup unavailable");
+          setErrorMessage(errorMessageFromUnknown(error));
+          setLoadState("error");
+          return;
+        }
+
         setPendingTribute(null);
         setLoadState("ready");
       })
@@ -73,6 +96,7 @@ export default function App() {
           return;
         }
 
+        setErrorTitle("Card bundle unavailable");
         setErrorMessage(error instanceof Error ? error.message : "Unable to load card bundle.");
         setLoadState("error");
       });
@@ -95,15 +119,35 @@ export default function App() {
     () => getLegalPlacementsForCard(game, selectedLocation?.area === "hand" ? game.selectedCardId : null),
     [game, selectedLocation],
   );
+  const legalAttackTargets = useMemo(
+    () => getLegalAttackTargetsForCard(game, selectedLocation?.area === "monster" ? game.selectedCardId : null),
+    [game, selectedLocation],
+  );
   const unavailableHandCardIds = useMemo(() => getUnavailableHandCardIds(game), [game]);
+  const promptView = useMemo(() => getPromptView(game), [game]);
+  const priorityView = useMemo(() => getPriorityView(game), [game]);
+  const chainView = useMemo(() => getChainView(game), [game]);
+
+  useEffect(() => {
+    setPromptSelectionIds([]);
+  }, [promptView.activePrompt?.id]);
 
   function resetGame() {
     if (cards.length === 0) {
       return;
     }
 
-    setGame(buildGameState(cards));
+    try {
+      setGame(buildGameState(cards));
+    } catch (error: unknown) {
+      setErrorTitle("Duel setup unavailable");
+      setErrorMessage(errorMessageFromUnknown(error));
+      setLoadState("error");
+      return;
+    }
+
     setPendingTribute(null);
+    setPromptSelectionIds([]);
   }
 
   function selectCard(cardId: string) {
@@ -132,6 +176,55 @@ export default function App() {
 
     setPendingTribute(null);
     setGame((current) => placeSelectedCard(current, placement.intent, placement.zoneKind, placement.zoneIndex));
+  }
+
+  function handleAttack(target: LegalAttackTarget) {
+    setPendingTribute(null);
+    setGame((current) => attackWithSelectedCard(current, target));
+  }
+
+  function togglePromptCandidate(candidateId: string) {
+    const maxSelections = promptView.activePrompt?.max ?? 0;
+
+    setPromptSelectionIds((current) => {
+      if (current.includes(candidateId)) {
+        return current.filter((id) => id !== candidateId);
+      }
+
+      if (maxSelections > 0 && current.length >= maxSelections) {
+        return current;
+      }
+
+      return [...current, candidateId];
+    });
+  }
+
+  function confirmPromptSelection() {
+    if (!promptView.activePrompt) {
+      return;
+    }
+
+    setGame((current) =>
+      answerActivePrompt(current, {
+        promptId: promptView.activePrompt!.id,
+        candidateIds: promptSelectionIds,
+      }),
+    );
+    setPromptSelectionIds([]);
+  }
+
+  function answerPromptChoice(choiceIds: string[]) {
+    if (!promptView.activePrompt) {
+      return;
+    }
+
+    setGame((current) =>
+      answerActivePrompt(current, {
+        promptId: promptView.activePrompt!.id,
+        choiceIds,
+      }),
+    );
+    setPromptSelectionIds([]);
   }
 
   function toggleTributeSelection(instanceId: string) {
@@ -199,9 +292,11 @@ export default function App() {
       <main className="screen shell-state">
         <div className="stone-panel status-panel error">
           <AlertTriangle size={32} />
-          <h1>Card bundle unavailable</h1>
+          <h1>{errorTitle}</h1>
           <p>{errorMessage}</p>
-          <p>Expected `/yugioh_cards/cards.json` to be served by Vite.</p>
+          {errorTitle === "Card bundle unavailable" ? (
+            <p>Expected `/yugioh_cards/cards.json` to be served by Vite.</p>
+          ) : null}
         </div>
       </main>
     );
@@ -214,8 +309,10 @@ export default function App() {
           <Board
             game={game}
             legalPlacements={legalPlacements}
+            legalAttackTargets={legalAttackTargets}
             onSelectCard={selectCard}
             onPlaceCard={handlePlaceCard}
+            onAttack={handleAttack}
             tributeSelection={pendingTribute}
             onToggleTribute={toggleTributeSelection}
             onCancelTribute={() => setPendingTribute(null)}
@@ -227,6 +324,7 @@ export default function App() {
             selectedCardId={game.selectedCardId}
             lastDrawnCardId={game.lastDrawnCardId}
             unavailableCardIds={unavailableHandCardIds}
+            debugMoveEnabled={import.meta.env.DEV}
             onSelectCard={selectCard}
             onSendToGraveyard={() => setGame((current) => sendSelectedToGraveyard(current))}
             onBanish={() => setGame((current) => banishSelected(current))}
@@ -253,10 +351,33 @@ export default function App() {
               onEditLp={(value) => handleSetLp("player", value)}
             />
           </div>
+
+          <TargetSelectionOverlay
+            prompt={promptView}
+            selectedCandidateIds={promptSelectionIds}
+            onToggleCandidate={togglePromptCandidate}
+          />
         </div>
 
         <aside className="side-rail">
           <CardDetail selectedCard={selectedCard} />
+          <div className="engine-surface-stack">
+            <PromptPanel
+              prompt={promptView}
+              selectedCandidateCount={promptSelectionIds.length}
+              onChoice={answerPromptChoice}
+              onConfirmSelection={confirmPromptSelection}
+              onClearSelection={() => setPromptSelectionIds([])}
+            />
+            <PriorityPanel
+              priority={priorityView}
+              onPassPriority={() => setGame((current) => passPriorityForPlayer(current))}
+            />
+            <ChainPanel
+              chain={chainView}
+              onResolveChain={() => setGame((current) => resolveCurrentChain(current))}
+            />
+          </div>
           <div className="rail-footer">
             <MusicPlayer />
             <ActionPanel onReset={resetGame} />
@@ -265,4 +386,8 @@ export default function App() {
       </section>
     </main>
   );
+}
+
+function errorMessageFromUnknown(error: unknown): string {
+  return error instanceof Error ? error.message : "Unable to prepare the duel.";
 }

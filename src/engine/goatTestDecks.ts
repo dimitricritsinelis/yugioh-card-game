@@ -1,6 +1,7 @@
 import type { CardRecord } from "../types";
+import { getCardCoverage, getCoverageRejectionReason, isPlayableCard } from "./cards/coverage";
 import { validateDeck } from "./deckValidation";
-import { shuffleSeeded } from "./random";
+import { createSeededRng, shuffleSeeded } from "./random";
 import type { DeckList, PlayerId } from "./types";
 
 export interface GoatTestDeckMetadata {
@@ -143,13 +144,16 @@ const MISSING_MAIN_DECK_FALLBACKS: Record<string, string> = {
   "Vorse Raider": "Axe Raider",
 };
 
-export function getRandomGoatTestDeck(rng: Rng = Math.random): GoatTestDeckDefinition {
+export function getRandomGoatTestDeck(rng: Rng = createSeededRng("goat-test-deck")): GoatTestDeckDefinition {
   const index = Math.min(Math.floor(clampRandom(rng()) * GOAT_TEST_DECKS.length), GOAT_TEST_DECKS.length - 1);
 
   return GOAT_TEST_DECKS[index];
 }
 
-export function assignRandomTestDecksToDuel(cards: CardRecord[], rng: Rng = Math.random): GoatTestDeckAssignment {
+export function assignRandomTestDecksToDuel(
+  cards: CardRecord[],
+  rng: Rng = createSeededRng("goat-test-deck-assignment"),
+): GoatTestDeckAssignment {
   const playerDefinition = getRandomGoatTestDeck(rng);
   const opponentDefinition = getRandomGoatTestDeck(rng);
   const player = buildGoatTestDeck(playerDefinition, cards, `P1:${randomSeed(rng)}`);
@@ -175,16 +179,12 @@ export function buildGoatTestDeck(
   const cardByName = new Map(cards.map((card) => [card.name, card]));
   const warnings: string[] = [];
   const main = resolveCardSpecs(definition.mainDeck, cardByName, warnings, definition.metadata.displayName, "Main Deck");
-  const extra = resolveCardSpecs(definition.extraDeck, cardByName, warnings, definition.metadata.displayName, "Extra Deck", {
-    omitMissing: true,
-  });
+  const playableMain = buildPlayableMainDeck(main, cards, warnings, definition.metadata.displayName, shuffleSeed);
 
   return {
     definition,
     deck: {
-      main: shuffleSeeded(main, `${shuffleSeed}:main`),
-      side: [],
-      extra,
+      main: playableMain,
     },
     warnings,
   };
@@ -258,9 +258,91 @@ function totalCards(specs: GoatTestDeckCardSpec[]): number {
 function cloneDeckList(deck: DeckList): DeckList {
   return {
     main: [...deck.main],
-    side: [...(deck.side ?? [])],
-    extra: [...(deck.extra ?? [])],
   };
+}
+
+function buildPlayableMainDeck(
+  passcodes: string[],
+  cards: CardRecord[],
+  warnings: string[],
+  deckName: string,
+  shuffleSeed: string,
+): string[] {
+  const cardByPasscode = new Map(cards.map((card) => [card.passcode, card]));
+  const counts = new Map<string, number>();
+  const playable: string[] = [];
+  const warnedCardIds = new Set<string>();
+
+  for (const passcode of passcodes) {
+    const card = cardByPasscode.get(passcode);
+
+    if (!card) {
+      continue;
+    }
+
+    const coverage = getCardCoverage(card);
+
+    if (!isPlayableCard(card.passcode, cards)) {
+      if (!warnedCardIds.has(card.passcode)) {
+        warnings.push(
+          `${deckName}: ${card.name} is ${getCoverageRejectionReason(coverage)}; using supported vanilla filler instead.`,
+        );
+        warnedCardIds.add(card.passcode);
+      }
+      continue;
+    }
+
+    const count = counts.get(card.passcode) ?? 0;
+
+    if (count >= card.legality.max_copies) {
+      warnings.push(`${deckName}: ${card.name} exceeds its copy limit in the local preset; extra copies were omitted.`);
+      continue;
+    }
+
+    counts.set(card.passcode, count + 1);
+    playable.push(card.passcode);
+  }
+
+  const fillerPool = shuffleSeeded(
+    cards.flatMap((card) => {
+      if (!isPlayableCard(card.passcode, cards)) {
+        return [];
+      }
+
+      const used = counts.get(card.passcode) ?? 0;
+      const remaining = Math.max(0, card.legality.max_copies - used);
+
+      return Array.from({ length: remaining }, () => card.passcode);
+    }),
+    `${deckName}:playable-filler`,
+  );
+
+  for (const passcode of fillerPool) {
+    if (playable.length >= 40) {
+      break;
+    }
+
+    const card = cardByPasscode.get(passcode);
+
+    if (!card) {
+      continue;
+    }
+
+    const count = counts.get(passcode) ?? 0;
+
+    if (count >= card.legality.max_copies) {
+      continue;
+    }
+
+    counts.set(passcode, count + 1);
+    playable.push(passcode);
+  }
+
+  if (playable.length !== 40) {
+    warnings.push(`${deckName}: resolved playable Main Deck has ${playable.length} cards; expected 40.`);
+  }
+
+  return shuffleSeeded(playable.slice(0, 40), `${shuffleSeed}:main`);
 }
 
 function randomSeed(rng: Rng): string {

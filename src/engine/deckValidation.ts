@@ -1,33 +1,41 @@
 import type { CardRecord } from "../types";
+import type { CardCoverageRegistry } from "./cards/coverage";
+import { getCardCoverage, getCoverageRejectionReason, isPlayableCoverageStatus } from "./cards/coverage";
 import type { DeckList, DeckValidationResult } from "./types";
 
-const MIN_MAIN_DECK_SIZE = 40;
-const MAX_MAIN_DECK_SIZE = 60;
-const MAX_SIDE_DECK_SIZE = 15;
-const MAX_EXTRA_DECK_SIZE = 15;
+const REQUIRED_MAIN_DECK_SIZE = 40;
 
-export function validateDeck(deck: DeckList, cards: CardRecord[]): DeckValidationResult {
+export interface DeckValidationOptions {
+  allowUnsupportedCards?: boolean;
+  coverageRegistry?: CardCoverageRegistry;
+}
+
+export function validateDeck(
+  deck: DeckList,
+  cards: CardRecord[],
+  options: DeckValidationOptions = {},
+): DeckValidationResult {
   const errors: string[] = [];
   const cardByPasscode = new Map(cards.map((card) => [card.passcode, card]));
   const main = deck.main ?? [];
   const side = deck.side ?? [];
   const extra = deck.extra ?? [];
 
-  if (main.length < MIN_MAIN_DECK_SIZE || main.length > MAX_MAIN_DECK_SIZE) {
-    errors.push(`Main Deck must contain ${MIN_MAIN_DECK_SIZE}-${MAX_MAIN_DECK_SIZE} cards.`);
+  if (main.length !== REQUIRED_MAIN_DECK_SIZE) {
+    errors.push(`Main Deck must contain exactly ${REQUIRED_MAIN_DECK_SIZE} cards.`);
   }
 
-  if (side.length > MAX_SIDE_DECK_SIZE) {
-    errors.push(`Side Deck cannot contain more than ${MAX_SIDE_DECK_SIZE} cards.`);
+  if (side.length > 0) {
+    errors.push("Side Deck is not supported for playable duels.");
   }
 
-  if (extra.length > MAX_EXTRA_DECK_SIZE) {
-    errors.push(`Extra Deck cannot contain more than ${MAX_EXTRA_DECK_SIZE} Fusion Monsters.`);
+  if (extra.length > 0) {
+    errors.push("Extra Deck is not supported for playable duels.");
   }
 
   const counts = new Map<string, number>();
 
-  for (const passcode of [...main, ...side, ...extra]) {
+  for (const passcode of main) {
     counts.set(passcode, (counts.get(passcode) ?? 0) + 1);
   }
 
@@ -39,21 +47,13 @@ export function validateDeck(deck: DeckList, cards: CardRecord[]): DeckValidatio
       continue;
     }
 
-    if (card.classifications.includes("Fusion")) {
-      errors.push(`${card.name} is a Fusion Monster and must be in the Extra Deck.`);
-    }
-  }
+    if (!options.allowUnsupportedCards) {
+      const coverage = getCardCoverage(card, options.coverageRegistry);
 
-  for (const passcode of extra) {
-    const card = cardByPasscode.get(passcode);
-
-    if (!card) {
-      errors.push(`Unknown Extra Deck card: ${passcode}.`);
-      continue;
-    }
-
-    if (!card.classifications.includes("Fusion")) {
-      errors.push(`${card.name} is not a Fusion Monster and cannot be in the Extra Deck.`);
+      if (!isPlayableCoverageStatus(coverage.status)) {
+        errors.push(`${card.name} is ${getCoverageRejectionReason(coverage)}.`);
+        continue;
+      }
     }
   }
 
@@ -81,4 +81,3 @@ export function validateDeck(deck: DeckList, cards: CardRecord[]): DeckValidatio
     errors,
   };
 }
-

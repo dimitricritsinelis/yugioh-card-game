@@ -1,0 +1,104 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "00295517",
+    "passcode": "00295517",
+    "slug": "a-legendary-ocean",
+    "name": "A Legendary Ocean",
+    "file_name": "00295517_a-legendary-ocean.webp",
+    "category": "Spell",
+    "classifications": [
+      "Field"
+    ],
+    "text": "This card's name is treated as \"Umi\". Downgrade all WATER monsters in both player's hands and on the field by 1 Level. Increases the ATK and DEF of all WATER monsters by 200 points.",
+    "monster": null,
+    "spell_trap": {
+      "icon": "Field"
+    },
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F00295517.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/goat-db/295517.webp",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/00295517_a-legendary-ocean.webp",
+      "file_name": "00295517_a-legendary-ocean.webp",
+      "content_type": "image/webp",
+      "byte_size": 45096,
+      "width": 512,
+      "height": 747,
+      "sha256": "5b2cfb9df6b451a64ccc36a32fc38721c9e504e8d9fd5ed181c464ba208da78a",
+      "status": "downloaded",
+      "error": null
+    },
+    "related_cards": [
+      "7",
+      "7 Completed",
+      "A Deal with Dark Ruler",
+      "A Feather of the Phoenix",
+      "A Wingbeat of Giant Dragon",
+      "Abyssal Designator",
+      "Acid Rain",
+      "After the Struggle"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/a-legendary-ocean",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/a-legendary-ocean.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 11,
+    "passcode": "00295517",
+    "name": "A Legendary Ocean",
+    "category": "Spell",
+    "classifications": [
+      "Field"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba",
+    "localTextHash": "02d2624b5294a052c7fd0b553ee5c1912de8b7885ede247c5a2d6818fc21e721",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:40:37.985Z",
+    "completedAt": null,
+    "attempts": 2,
+    "mechanicTags": [
+      "field",
+      "spell"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/a-legendary-ocean",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0011-00295517-a-legendary-ocean.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "manifest": "src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}

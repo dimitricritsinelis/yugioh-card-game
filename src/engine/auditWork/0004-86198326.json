@@ -1,0 +1,105 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "86198326",
+    "passcode": "86198326",
+    "slug": "7-completed",
+    "name": "7 Completed",
+    "file_name": "86198326_7-completed.webp",
+    "category": "Spell",
+    "classifications": [
+      "Equip"
+    ],
+    "text": "Activate this card by choosing ATK or DEF; equip only to a Machine monster. It gains 700 ATK or DEF, depending on the choice.",
+    "monster": null,
+    "spell_trap": {
+      "icon": "Equip"
+    },
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F86198326.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/_next/image?url=%2Fgoat-db%2F86198326.webp&w=640&q=75",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/86198326_7-completed.webp",
+      "file_name": "86198326_7-completed.webp",
+      "content_type": null,
+      "byte_size": 51769,
+      "width": 512,
+      "height": 747,
+      "sha256": "1a9ce119f7a975121f5ba1344d8e607b9d8394bcd98b2684c263038a5d7c447c",
+      "status": "cached",
+      "error": null
+    },
+    "related_cards": [
+      "7",
+      "A Deal with Dark Ruler",
+      "A Feather of the Phoenix",
+      "A Legendary Ocean",
+      "A Wingbeat of Giant Dragon",
+      "Abyssal Designator",
+      "Acid Rain",
+      "After the Struggle"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/7-completed",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/7-completed.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 4,
+    "passcode": "86198326",
+    "name": "7 Completed",
+    "category": "Spell",
+    "classifications": [
+      "Equip"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-53-03-584Z-d8b218d2-7161-445b-8817-85d0d0257143",
+    "localTextHash": "5c6280a95c15aa16ae298eb2bff7053725d6ada211cb0f3e0363062a898bfeb2",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:53:03.602Z",
+    "completedAt": null,
+    "attempts": 4,
+    "mechanicTags": [
+      "equip",
+      "spell"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/7-completed",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-53-03-584Z-d8b218d2-7161-445b-8817-85d0d0257143. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0004-86198326-7-completed.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "checkpoint": "src/engine/auditWork/checkpoints/0004-86198326.json",
+    "manifest": "parent runner merges checkpoint into src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}
