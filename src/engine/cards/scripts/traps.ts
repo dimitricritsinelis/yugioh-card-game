@@ -31,7 +31,7 @@ export const TRAP_CARD_SCRIPTS: readonly CardScript[] = Object.freeze([
 ]);
 
 export const TRAP_CARD_COVERAGE: CardCoverageRegistry = Object.freeze({
-  [MIRROR_FORCE_ID]: "implemented",
-  [TORRENTIAL_TRIBUTE_ID]: "implemented",
-  [SAKURETSU_ARMOR_ID]: "implemented",
+  [MIRROR_FORCE_ID]: "goatTemplate",
+  [TORRENTIAL_TRIBUTE_ID]: "goatTemplate",
+  [SAKURETSU_ARMOR_ID]: "goatTemplate",
 });

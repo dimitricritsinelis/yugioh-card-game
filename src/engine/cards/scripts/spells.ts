@@ -58,9 +58,9 @@ export const SPELL_CARD_SCRIPTS: readonly CardScript[] = Object.freeze([
 ]);
 
 export const SPELL_CARD_COVERAGE: CardCoverageRegistry = Object.freeze({
-  [POT_OF_GREED_ID]: "implemented",
-  [HEAVY_STORM_ID]: "implemented",
-  [MYSTICAL_SPACE_TYPHOON_ID]: "implemented",
-  [BOOK_OF_MOON_ID]: "implemented",
-  [UPSTART_GOBLIN_ID]: "implemented",
+  [POT_OF_GREED_ID]: "goatTemplate",
+  [HEAVY_STORM_ID]: "goatTemplate",
+  [MYSTICAL_SPACE_TYPHOON_ID]: "goatTemplate",
+  [BOOK_OF_MOON_ID]: "goatTemplate",
+  [UPSTART_GOBLIN_ID]: "goatTemplate",
 });

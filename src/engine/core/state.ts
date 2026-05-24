@@ -6,7 +6,7 @@ import type { DamageStepState } from "../rules/damageStep";
 import type { ChainLink } from "../rules/chain";
 import type { PriorityState } from "../rules/priority";
 import type { EnginePrompt } from "../result";
-import type { PlayerId } from "../types";
+import type { PlayerId, TurnMode } from "../types";
 import type { CardInstance, ZoneCard } from "./cardRefs";
 
 export interface PlayerState {
@@ -40,10 +40,15 @@ export interface PendingBattleStatModifier {
 export interface DuelState {
   readonly id: string;
   readonly seed: string;
+  readonly turnMode?: TurnMode;
   readonly turn: number;
   readonly phase: Phase;
   readonly activePlayer: PlayerId;
   readonly priorityPlayer: PlayerId;
+  readonly turnFlags?: {
+    readonly drawnThisTurn: boolean;
+    readonly battlePhaseConducted: boolean;
+  };
   readonly priority: PriorityState;
   readonly damageStep?: DamageStepState;
   readonly cardDefinitions?: Readonly<Record<CardId, CardDefinition>>;

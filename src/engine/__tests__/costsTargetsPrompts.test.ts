@@ -110,6 +110,10 @@ describe("effect targets", () => {
                 max: 1,
               },
             ],
+            resolution: {
+              steps: [{ kind: "destroy-targets" }],
+              sendSourceToGraveyard: false,
+            },
           },
         ],
       },
@@ -146,8 +150,9 @@ describe("effect targets", () => {
     };
     const resolved = reduceDuel(invalidated, { type: "resolve-chain", playerId: "P1" });
 
-    expect(resolved.errors[0]?.message).toBe("Stored target is no longer valid.");
-    expect(resolved.state.chain).toEqual(activation.state.chain);
+    expect(resolved.errors).toEqual([]);
+    expect(resolved.events.map((event) => event.type)).toContain("effect-resolved-without-effect");
+    expect(resolved.state.chain).toEqual([]);
   });
 });
 

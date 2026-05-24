@@ -485,8 +485,10 @@ export function placeSelectedCard(
       "monster-summoned",
       "monster-tribute-set",
       "monster-tribute-summoned",
+      "summon-successful",
       "spell-trap-set",
       "card-activated",
+      "effect-activated",
     ].includes(event.type),
   );
 

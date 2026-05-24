@@ -43,8 +43,8 @@ export interface SummonProfile {
 
 /**
  * Classifies how a monster card is summoned (GOAT-era rules): Level 1-4 → Normal
- * Summon; Level 5-6 / 7+ → Tribute Summon with 1 / 2 tributes; Fusion / Ritual /
- * Nomi cards → Special Summon. Returns null for non-monsters.
+ * Summon; Level 5-6 / 7+ → Tribute Summon with 1 / 2 tributes; Fusion / Ritual
+ * cards → Special Summon. Returns null for non-monsters.
  */
 export function getSummonProfile(card: CardRecord): SummonProfile | null {
   if (card.category !== "Monster" || !card.monster) {
@@ -56,9 +56,6 @@ export function getSummonProfile(card: CardRecord): SummonProfile | null {
   }
   if (card.classifications.includes("Ritual")) {
     return { kind: "special", tributes: 0, specialType: "Ritual" };
-  }
-  if (/cannot be normal summoned/i.test(card.text)) {
-    return { kind: "special", tributes: 0, specialType: null };
   }
 
   const level = card.monster.level ?? 0;

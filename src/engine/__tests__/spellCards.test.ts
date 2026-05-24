@@ -98,8 +98,8 @@ describe("supported Spell card scripts", () => {
     const graceful = cardById(GRACEFUL_CHARITY_ID);
     const vortex = cardById(LIGHTNING_VORTEX_ID);
 
-    expect(getCardCoverage(graceful).status).toBe("unsupported");
-    expect(getCardCoverage(vortex).status).toBe("unsupported");
+    expect(getCardCoverage(graceful).status).toBe("goatUnsupported");
+    expect(getCardCoverage(vortex).status).toBe("goatUnsupported");
     expect(isPlayableCard(GRACEFUL_CHARITY_ID, cards)).toBe(false);
 
     const result = validateDeck(deckWithPriority([GRACEFUL_CHARITY_ID]), [...cards]);

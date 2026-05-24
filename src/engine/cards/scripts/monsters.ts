@@ -52,8 +52,8 @@ export const MONSTER_CARD_SCRIPTS: readonly CardScript[] = Object.freeze([
 ]);
 
 export const MONSTER_CARD_COVERAGE: CardCoverageRegistry = Object.freeze({
-  [DEKOICHI_ID]: "implemented",
-  [MAGICIAN_OF_FAITH_ID]: "implemented",
-  [OLD_VINDICTIVE_MAGICIAN_ID]: "implemented",
-  [EXILED_FORCE_ID]: "implemented",
+  [DEKOICHI_ID]: "goatTemplate",
+  [MAGICIAN_OF_FAITH_ID]: "goatTemplate",
+  [OLD_VINDICTIVE_MAGICIAN_ID]: "goatTemplate",
+  [EXILED_FORCE_ID]: "goatTemplate",
 });

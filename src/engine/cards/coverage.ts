@@ -1,22 +1,24 @@
 import type { CardRecord } from "../../types";
+import {
+  CARD_COVERAGE_MANIFEST,
+  CARD_COVERAGE_STATUSES,
+  type CardCoverageStatus,
+} from "./coverageManifest.generated";
 import { ENGINE_CARD_COVERAGE } from "./registry";
 
-export type CardCoverageStatus =
-  | "implemented"
-  | "vanilla"
-  | "unsupported"
-  | "blockedNoExtraDeck"
-  | "blockedByScope";
-
 export type CardCoverageRegistry = Readonly<Partial<Record<string, CardCoverageStatus>>>;
+export type { CardCoverageStatus };
 
 export interface CardCoverage {
   readonly cardId: string;
   readonly status: CardCoverageStatus;
-  readonly source: "registry" | "metadata";
+  readonly source: "registry" | "manifest";
 }
 
-const PLAYABLE_STATUSES = new Set<CardCoverageStatus>(["implemented", "vanilla"]);
+export { CARD_COVERAGE_MANIFEST, CARD_COVERAGE_STATUSES };
+
+const PLAYABLE_STATUSES = new Set<CardCoverageStatus>(["goatVanilla", "goatTemplate", "goatCustom"]);
+const DEFAULT_CARD_COVERAGE_MANIFEST: Readonly<Record<string, CardCoverageStatus>> = CARD_COVERAGE_MANIFEST;
 
 export function getCardCoverage(
   card: CardRecord,
@@ -34,12 +36,14 @@ export function getCardCoverage(
 
   return {
     cardId: card.passcode,
-    status: inferCoverageStatus(card),
-    source: "metadata",
+    status: DEFAULT_CARD_COVERAGE_MANIFEST[card.passcode] ?? "goatUnsupported",
+    source: "manifest",
   };
 }
 
-export function isPlayableCoverageStatus(status: CardCoverageStatus): boolean {
+export function isPlayableCoverageStatus(
+  status: CardCoverageStatus,
+): status is Extract<CardCoverageStatus, "goatVanilla" | "goatTemplate" | "goatCustom"> {
   return PLAYABLE_STATUSES.has(status);
 }
 
@@ -62,40 +66,17 @@ export function isPlayableCard(
 
 export function getCoverageRejectionReason(coverage: CardCoverage): string {
   switch (coverage.status) {
-    case "blockedNoExtraDeck":
+    case "goatDeckBlocked":
       return "blocked because Extra/Fusion Decks are outside playable scope";
-    case "blockedByScope":
-      return "blocked by the current playable scope";
-    case "unsupported":
+    case "goatUnsupported":
       return "not supported in playable decks";
-    case "implemented":
-    case "vanilla":
+    case "notInGoatPool":
+      return "not in the supported GOAT playable pool";
+    case "goatForbiddenButScripted":
+      return "scripted for development but forbidden in normal playable decks";
+    case "goatTemplate":
+    case "goatCustom":
+    case "goatVanilla":
       return "playable";
   }
-}
-
-function inferCoverageStatus(card: CardRecord): CardCoverageStatus {
-  if (card.legality.goat_world_pool !== true || card.legality.max_copies <= 0) {
-    return "blockedByScope";
-  }
-
-  if (card.classifications.includes("Fusion")) {
-    return "blockedNoExtraDeck";
-  }
-
-  if (isVanillaNormalMonster(card)) {
-    return "vanilla";
-  }
-
-  return "unsupported";
-}
-
-function isVanillaNormalMonster(card: CardRecord): boolean {
-  return (
-    card.category === "Monster" &&
-    card.classifications.includes("Normal") &&
-    !card.classifications.includes("Effect") &&
-    !card.classifications.includes("Fusion") &&
-    !card.classifications.includes("Ritual")
-  );
 }

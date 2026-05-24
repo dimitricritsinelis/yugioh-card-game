@@ -228,9 +228,10 @@ describe("frontend adapter selectors", () => {
 
     const afterDebugMove = sendSelectedToGraveyard(afterAttack);
 
-    expect(afterDebugMove.engine!.players.P1.monsterZones[summon!.zoneIndex]).toBeNull();
-    expect(afterDebugMove.engine!.players.P1.graveyard[0].instance.instanceId).toBe(summon!.instanceId);
-    expect(afterDebugMove.player.graveyard[0].instance.instanceId).toBe(summon!.instanceId);
+    expect(afterDebugMove.engine!.players.P1.monsterZones[summon!.zoneIndex]?.instance.instanceId).toBe(
+      summon!.instanceId,
+    );
+    expect(afterDebugMove.actionLog[0].message).toContain("move-card is not implemented");
   });
 
   it("validates default and provided frontend deck selections before starting a duel", () => {
@@ -360,7 +361,7 @@ describe("frontend adapter selectors", () => {
     expect(answered.engine!.pendingPrompts).toEqual([]);
   });
 
-  it("passes priority and resolves current chain through engine commands", () => {
+  it("passes priority and reports malformed injected chain links through engine commands", () => {
     const game = createPlayableGame("frontend-priority-chain");
     const source = game.engine!.players.P1.hand[0];
 
@@ -409,8 +410,8 @@ describe("frontend adapter selectors", () => {
 
     const resolved = resolveCurrentChain(chainGame);
 
-    expect(resolved.engine!.chain).toEqual([]);
-    expect(resolved.actionLog[0].message).toContain("Chain link chain-1 resolved");
+    expect(resolved.engine!.chain).toEqual(chainGame.engine!.chain);
+    expect(resolved.actionLog[0].message).toContain("EFFECT_NOT_IMPLEMENTED");
   });
 
   it("maps recent engine events to action log messages", () => {

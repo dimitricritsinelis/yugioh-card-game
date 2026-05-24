@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
 import { isPlayableCard } from "../cards/coverage";
-import type { CardCoverageRegistry } from "../cards/coverage";
+import type { CardCoverageRegistry, CardCoverageStatus } from "../cards/coverage";
 import { ENGINE_CARD_COVERAGE } from "../cards/registry";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
@@ -222,16 +222,16 @@ function monsterZone(instanceId: string, name: string, owner: "P1" | "P2"): Zone
 }
 
 function exodiaCoverageRegistry(cardIds: readonly string[]): CardCoverageRegistry {
-  const registry: Record<string, "implemented"> = {};
+  const registry: Record<string, CardCoverageStatus> = {};
 
   for (const [cardId, status] of Object.entries(ENGINE_CARD_COVERAGE)) {
-    if (status === "implemented") {
+    if (status === "goatTemplate" || status === "goatCustom") {
       registry[cardId] = status;
     }
   }
 
   for (const cardId of cardIds) {
-    registry[cardId] = "implemented";
+    registry[cardId] = "goatTemplate";
   }
 
   return Object.freeze(registry);

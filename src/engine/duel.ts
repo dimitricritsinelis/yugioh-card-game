@@ -5,6 +5,7 @@ import type { DuelState as CoreDuelState } from "./core/state";
 import { validateDeck } from "./deckValidation";
 import { shuffleSeeded } from "./random";
 import { createDuel as createCoreDuel, reduceDuel } from "./reducer";
+import type { EngineCommand } from "./commands";
 import type { EngineEvent } from "./events";
 import { createPriorityWindow, PASS_PRIORITY } from "./rules/priority";
 import type { ChainLink as CoreChainLink } from "./rules/chain";
@@ -46,6 +47,7 @@ export function createDuel(config: CreateDuelConfig): DuelState {
     },
     seed,
     firstPlayer,
+    mode,
     allowUnsupportedCards: config.allowUnsupportedCards,
     shuffleDecks: false,
   });
@@ -161,7 +163,7 @@ export function getLegalActions(state: DuelState, playerId: PlayerId): DuelActio
     }
   }
 
-  return actions;
+  return actions.filter((action) => isCoreRoutableLegalAction(state, action));
 }
 
 export function applyAction(state: DuelState, action: DuelAction): DuelResult {
@@ -175,34 +177,16 @@ export function applyAction(state: DuelState, action: DuelAction): DuelResult {
 
   switch (action.type) {
     case "draw":
-      handleDraw(draft, action.playerId);
-      break;
     case "advance-phase":
-      handleAdvancePhase(draft, action.playerId);
-      break;
-    case "set-phase":
-      handleSetPhase(draft, action.playerId, action.phase);
-      break;
     case "end-turn":
-      handleEndTurn(draft, action.playerId);
-      break;
     case "play-card":
-      handlePlayCard(draft, action);
-      break;
-    case "move-card":
-      handleMoveCard(draft, action.playerId, action.instanceId, action.destination);
-      break;
     case "attack":
-      handleAttack(draft, action.playerId, action.attackerInstanceId, action.defenderInstanceId);
-      break;
     case "pass-priority":
-      handleCoreCommand(draft, { type: PASS_PRIORITY, playerId: action.playerId });
-      break;
     case "resolve-chain":
-      handleCoreCommand(draft, action);
-      break;
     case "answer-prompt":
-      handleCoreCommand(draft, action);
+    case "set-phase":
+    case "move-card":
+      handleCoreRoutedAction(draft, action);
       break;
     case "set-life-points":
       setLifePoints(draft, action.targetPlayerId, action.value);
@@ -221,9 +205,9 @@ export function advanceToNextDecision(state: DuelState, playerId: PlayerId): Due
     guard += 1;
 
     if (draft.phase === "EP") {
-      handleEndTurn(draft, playerId);
+      handleCoreRoutedAction(draft, { type: "end-turn", playerId });
     } else {
-      handleAdvancePhase(draft, playerId);
+      handleCoreRoutedAction(draft, { type: "advance-phase", playerId });
     }
   }
 
@@ -250,7 +234,7 @@ export function runPassiveBoardFillerOpponentTurn(
   });
 
   if (!draft.winner && draft.activePlayer === "P2") {
-    handleEndTurn(draft, "P2");
+    handleCoreRoutedAction(draft, { type: "end-turn", playerId: "P2" });
   }
 
   return result(draft, eventStart);
@@ -854,10 +838,10 @@ function legacyStateFromCore(
     phase: coreState.phase,
     activePlayer: coreState.activePlayer,
     priorityPlayer: coreState.priorityPlayer,
-    battleSubstep: "none",
+    battleSubstep: legacyBattleSubstepFromCore(coreState),
     players: {
-      P1: legacyPlayerFromCore(coreState.players.P1, cardByPasscode),
-      P2: legacyPlayerFromCore(coreState.players.P2, cardByPasscode),
+      P1: legacyPlayerFromCore(coreState.players.P1, cardByPasscode, coreState.turn),
+      P2: legacyPlayerFromCore(coreState.players.P2, cardByPasscode, coreState.turn),
     },
     chain: coreState.chain.map(legacyChainLinkFromCore),
     pendingPrompts: coreState.pendingPromptIds
@@ -866,8 +850,8 @@ function legacyStateFromCore(
       .map(legacyPromptFromCore),
     events: events.map(legacyEventFromCore),
     turnFlags: {
-      drawnThisTurn: false,
-      battlePhaseConducted: false,
+      drawnThisTurn: coreState.turnFlags?.drawnThisTurn ?? false,
+      battlePhaseConducted: coreState.turnFlags?.battlePhaseConducted ?? false,
     },
     winner: coreState.winner,
   };
@@ -886,8 +870,10 @@ function syncLegacyStateFromCoreResult(
   state.phase = next.phase;
   state.activePlayer = next.activePlayer;
   state.priorityPlayer = next.priorityPlayer;
+  state.battleSubstep = next.battleSubstep;
   state.players = next.players;
   state.winner = next.winner;
+  state.turnFlags = next.turnFlags;
   state.chain = coreState.chain.map(legacyChainLinkFromCore);
   state.pendingPrompts = coreState.pendingPromptIds
     .map((promptId) => coreState.prompts[promptId])
@@ -896,31 +882,265 @@ function syncLegacyStateFromCoreResult(
   state.events = [...state.events, ...events.map(legacyEventFromCore)].slice(-40);
 }
 
-function handleCoreCommand(state: DuelState, command: Parameters<typeof reduceDuel>[1]): void {
-  const result = reduceDuel(coreStateFromLegacy(state), command);
+function handleCoreRoutedAction(state: DuelState, action: DuelAction): void {
+  const routed = coreCommandsFromLegacyAction(state, action);
 
-  syncLegacyStateFromCoreResult(state, result.state, result.events);
+  if ("error" in routed) {
+    addEvent(state, "illegal-action", routed.error);
+    return;
+  }
+
+  let coreState = coreStateFromLegacy(state);
+  const events: EngineEvent[] = [];
+
+  for (const command of routed.commands) {
+    const coreResult = reduceDuel(coreState, command);
+
+    coreState = coreResult.state;
+    events.push(...coreResult.events);
+
+    if (coreResult.errors.length > 0 || coreState.winner) {
+      break;
+    }
+  }
+
+  syncLegacyStateFromCoreResult(state, coreState, events);
+}
+
+function isCoreRoutableLegalAction(state: DuelState, action: DuelAction): boolean {
+  if (
+    action.type === "play-card" &&
+    action.zoneKind === "monster" &&
+    (action.tributeCount ?? 0) > (action.tributeInstanceIds?.length ?? 0)
+  ) {
+    return true;
+  }
+
+  const routed = coreCommandsFromLegacyAction(state, action);
+
+  if ("error" in routed) {
+    return false;
+  }
+
+  let coreState = coreStateFromLegacy(state);
+
+  for (const command of routed.commands) {
+    const coreResult = reduceDuel(coreState, command);
+
+    if (coreResult.errors.length > 0) {
+      return false;
+    }
+
+    coreState = coreResult.state;
+  }
+
+  return true;
+}
+
+function coreCommandsFromLegacyAction(
+  state: DuelState,
+  action: DuelAction,
+): { readonly commands: readonly EngineCommand[] } | { readonly error: string } {
+  switch (action.type) {
+    case "draw":
+      return { commands: [{ type: "draw-card", playerId: action.playerId }] };
+    case "advance-phase": {
+      const nextPhase = nextPhaseAfter(state.phase);
+
+      if (!nextPhase) {
+        return { error: "No later phase is available; use End Turn from the End Phase." };
+      }
+
+      return { commands: [{ type: "change-phase", playerId: action.playerId, phase: nextPhase }] };
+    }
+    case "set-phase":
+      return coreCommandsToReachPhase(state, action.playerId, action.phase);
+    case "end-turn":
+      return coreCommandsToEndTurn(state, action.playerId);
+    case "play-card":
+      return coreCommandsFromPlayCardAction(state, action);
+    case "move-card":
+      return {
+        commands: [
+          {
+            type: "move-card",
+            playerId: action.playerId,
+            instanceId: action.instanceId,
+            destination: {
+              playerId: action.playerId,
+              zone: action.destination,
+              index: 0,
+            },
+          },
+        ],
+      };
+    case "attack":
+      return {
+        commands: [
+          {
+            type: "attack",
+            playerId: action.playerId,
+            attackerInstanceId: action.attackerInstanceId,
+            defenderInstanceId: action.defenderInstanceId,
+          },
+        ],
+      };
+    case "pass-priority":
+      return { commands: [{ type: PASS_PRIORITY, playerId: action.playerId }] };
+    case "resolve-chain":
+      return { commands: [action] };
+    case "answer-prompt":
+      return { commands: [action] };
+    case "set-life-points":
+      return { error: "Life point editing is handled by the debug life point control." };
+  }
+}
+
+function coreCommandsFromPlayCardAction(
+  state: DuelState,
+  action: Extract<DuelAction, { type: "play-card" }>,
+): { readonly commands: readonly EngineCommand[] } | { readonly error: string } {
+  const player = state.players[action.playerId];
+  const instance = player.hand.find((card) => card.instanceId === action.instanceId);
+
+  if (!instance) {
+    return { error: "Selected card is not in that player's hand." };
+  }
+
+  if (instance.card.category === "Monster") {
+    if (action.intent === "activate") {
+      return { error: "Monster effects are not activated through play-card yet." };
+    }
+
+    if (action.zoneKind !== "monster") {
+      return { error: `${instance.card.name} cannot be played to that zone type.` };
+    }
+
+    return {
+      commands: [
+        {
+          type: action.intent === "set" ? "set-monster" : "normal-summon",
+          playerId: action.playerId,
+          instanceId: action.instanceId,
+          zoneIndex: action.zoneIndex,
+          tributeInstanceIds: action.tributeInstanceIds,
+        },
+      ],
+    };
+  }
+
+  if (action.zoneKind !== "spellTrap") {
+    return { error: `${instance.card.name} cannot be played to that zone type.` };
+  }
+
+  if (action.intent === "summon") {
+    return { error: "Only monsters can be Summoned." };
+  }
+
+  if (action.intent === "set") {
+    return {
+      commands: [
+        {
+          type: "set-spell-trap",
+          playerId: action.playerId,
+          instanceId: action.instanceId,
+          zoneIndex: action.zoneIndex,
+        },
+      ],
+    };
+  }
+
+  return {
+    commands: [
+      {
+        type: "activate-card",
+        playerId: action.playerId,
+        instanceId: action.instanceId,
+        targetRefs: action.targetRefs,
+        targetPlayerIds: action.targetPlayerIds,
+      },
+    ],
+  };
+}
+
+function coreCommandsToReachPhase(
+  state: DuelState,
+  playerId: PlayerId,
+  phase: Phase,
+): { readonly commands: readonly EngineCommand[] } | { readonly error: string } {
+  if (state.phase === phase) {
+    return { commands: [] };
+  }
+
+  const commands: EngineCommand[] = [];
+  let currentPhase: Phase = state.phase;
+
+  while (currentPhase !== phase) {
+    const nextPhase = nextPhaseAfter(currentPhase);
+
+    if (!nextPhase) {
+      return { error: `Cannot jump from ${phaseLabel(state.phase)} to ${phaseLabel(phase)} through legal phase changes.` };
+    }
+
+    commands.push({ type: "change-phase", playerId, phase: nextPhase });
+    currentPhase = nextPhase;
+  }
+
+  return { commands };
+}
+
+function coreCommandsToEndTurn(
+  state: DuelState,
+  playerId: PlayerId,
+): { readonly commands: readonly EngineCommand[] } | { readonly error: string } {
+  const phaseRoute = coreCommandsToReachPhase(state, playerId, "EP");
+
+  if ("error" in phaseRoute) {
+    return phaseRoute;
+  }
+
+  return {
+    commands: [
+      ...phaseRoute.commands,
+      { type: "end-turn", playerId },
+    ],
+  };
+}
+
+function nextPhaseAfter(phase: Phase): Phase | null {
+  const currentIndex = PHASES.indexOf(phase);
+
+  return currentIndex >= 0 ? PHASES[currentIndex + 1] ?? null : null;
 }
 
 function coreStateFromLegacy(state: DuelState): CoreDuelState {
+  const previousCore = state.coreState;
   const priority =
-    state.coreState?.priority.holder === state.priorityPlayer
-      ? state.coreState.priority
+    previousCore?.priority.holder === state.priorityPlayer
+      ? previousCore.priority
       : createPriorityWindow(state.priorityPlayer, "phase-start");
 
   return {
     id: state.id,
     seed: state.seed,
+    turnMode: state.mode,
     turn: state.turn,
     phase: state.phase,
     activePlayer: state.activePlayer,
     priorityPlayer: state.priorityPlayer,
+    turnFlags: { ...state.turnFlags },
     priority,
+    damageStep: previousCore?.damageStep,
+    cardDefinitions: previousCore?.cardDefinitions,
+    cardScripts: previousCore?.cardScripts,
+    implementedCardIds: previousCore?.implementedCardIds,
     players: {
-      P1: corePlayerFromLegacy(state.players.P1),
-      P2: corePlayerFromLegacy(state.players.P2),
+      P1: corePlayerFromLegacy(state.players.P1, state.turn),
+      P2: corePlayerFromLegacy(state.players.P2, state.turn),
     },
-    chain: state.coreState?.chain ?? [],
+    chain: previousCore?.chain ?? [],
+    pendingAttack: previousCore?.pendingAttack ?? null,
+    lingeringEffects: previousCore?.lingeringEffects ?? [],
     prompts: Object.fromEntries(
       state.pendingPrompts.map((prompt) => [
         prompt.id,
@@ -935,7 +1155,7 @@ function coreStateFromLegacy(state: DuelState): CoreDuelState {
       ]),
     ),
     pendingPromptIds: state.pendingPrompts.map((prompt) => prompt.id),
-    eventIds: state.events.map((event) => event.id),
+    eventIds: previousCore?.eventIds ?? state.events.map((event) => event.id),
     winner: state.winner,
   };
 }
@@ -943,16 +1163,17 @@ function coreStateFromLegacy(state: DuelState): CoreDuelState {
 function legacyPlayerFromCore(
   player: CoreDuelState["players"][PlayerId],
   cardByPasscode: ReadonlyMap<string, CardRecord>,
+  turn: number,
 ): DuelPlayerState {
   return {
     id: player.id,
     lp: player.lp,
     deck: player.mainDeck.map((card) => legacyInstanceFromCore(card, cardByPasscode)),
     hand: player.hand.map((card) => legacyInstanceFromCore(card, cardByPasscode)),
-    monsterZones: player.monsterZones.map((card) => legacyZoneFromCore(card, cardByPasscode)),
-    spellTrapZones: player.spellTrapZones.map((card) => legacyZoneFromCore(card, cardByPasscode)),
-    graveyard: player.graveyard.map((card) => legacyZoneFromCore(card, cardByPasscode)).filter(isDuelZoneCard),
-    banished: player.banished.map((card) => legacyZoneFromCore(card, cardByPasscode)).filter(isDuelZoneCard),
+    monsterZones: player.monsterZones.map((card) => legacyZoneFromCore(card, cardByPasscode, turn)),
+    spellTrapZones: player.spellTrapZones.map((card) => legacyZoneFromCore(card, cardByPasscode, turn)),
+    graveyard: player.graveyard.map((card) => legacyZoneFromCore(card, cardByPasscode, turn)).filter(isDuelZoneCard),
+    banished: player.banished.map((card) => legacyZoneFromCore(card, cardByPasscode, turn)).filter(isDuelZoneCard),
     sideDeck: [],
     extraDeck: [],
     normalSummonUsed: player.normalSummonUsed,
@@ -960,16 +1181,16 @@ function legacyPlayerFromCore(
   };
 }
 
-function corePlayerFromLegacy(player: DuelPlayerState): CoreDuelState["players"][PlayerId] {
+function corePlayerFromLegacy(player: DuelPlayerState, turn = 0): CoreDuelState["players"][PlayerId] {
   return {
     id: player.id,
     lp: player.lp,
     mainDeck: player.deck.map(coreInstanceFromLegacy),
     hand: player.hand.map(coreInstanceFromLegacy),
-    monsterZones: player.monsterZones.map(coreZoneFromLegacy),
-    spellTrapZones: player.spellTrapZones.map(coreZoneFromLegacy),
-    graveyard: player.graveyard.map(coreZoneFromLegacy).filter(isCoreZoneCard),
-    banished: player.banished.map(coreZoneFromLegacy).filter(isCoreZoneCard),
+    monsterZones: player.monsterZones.map((zone) => coreZoneFromLegacy(zone, turn)),
+    spellTrapZones: player.spellTrapZones.map((zone) => coreZoneFromLegacy(zone, turn)),
+    graveyard: player.graveyard.map((zone) => coreZoneFromLegacy(zone, turn)).filter(isCoreZoneCard),
+    banished: player.banished.map((zone) => coreZoneFromLegacy(zone, turn)).filter(isCoreZoneCard),
     fieldZone: null,
     normalSummonUsed: player.normalSummonUsed,
     lost: player.lost,
@@ -1010,20 +1231,28 @@ function coreInstanceFromLegacy(instance: DuelCardInstance): CoreCardInstance {
 function legacyZoneFromCore(
   card: CoreZoneCard | null,
   cardByPasscode: ReadonlyMap<string, CardRecord>,
+  turn: number,
 ): DuelZoneCard | null {
   if (!card) {
     return null;
   }
 
+  const instance = legacyInstanceFromCore(card, cardByPasscode);
+
   return {
-    instance: legacyInstanceFromCore(card, cardByPasscode),
+    instance: {
+      ...instance,
+      summonedTurn: card.summonedTurn ?? null,
+      positionChangedTurn: card.positionChangedTurn ?? null,
+      attackedThisTurn: card.attackedTurn === turn,
+    },
     faceDown: card.face === "faceDown",
     position: card.position ?? "attack",
     status: card.face === "faceDown" ? "set" : card.position ? "summoned" : "activated",
   };
 }
 
-function coreZoneFromLegacy(zone: DuelZoneCard | null): CoreZoneCard | null {
+function coreZoneFromLegacy(zone: DuelZoneCard | null, turn = 0): CoreZoneCard | null {
   if (!zone) {
     return null;
   }
@@ -1031,10 +1260,13 @@ function coreZoneFromLegacy(zone: DuelZoneCard | null): CoreZoneCard | null {
   return {
     ...coreInstanceFromLegacy(zone.instance),
     face: zone.faceDown ? "faceDown" : "faceUp",
-    position: zone.position,
+    position: zone.status === "activated" ? null : zone.position,
     visibility: zone.faceDown ? "hidden" : "public",
     counters: {},
     attachments: [],
+    summonedTurn: zone.instance.summonedTurn,
+    positionChangedTurn: zone.instance.positionChangedTurn,
+    attackedTurn: zone.instance.attackedThisTurn ? turn : null,
   };
 }
 
@@ -1068,6 +1300,28 @@ function legacyPromptFromCore(prompt: EnginePrompt): DuelPrompt {
     max: prompt.max,
     metadata: prompt.metadata,
   };
+}
+
+function legacyBattleSubstepFromCore(coreState: CoreDuelState): DuelState["battleSubstep"] {
+  if (coreState.pendingAttack) {
+    return "beforeDamageCalculation";
+  }
+
+  switch (coreState.damageStep?.substep) {
+    case "start":
+      return "start";
+    case "before-damage-calculation":
+      return "beforeDamageCalculation";
+    case "damage-calculation":
+      return "damageCalculation1";
+    case "after-damage-calculation":
+      return "afterDamageCalculation";
+    case "end":
+      return "end";
+    case "none":
+    case undefined:
+      return coreState.phase === "BP" ? "start" : "none";
+  }
 }
 
 function isEnginePrompt(prompt: EnginePrompt | undefined): prompt is EnginePrompt {
@@ -1297,6 +1551,8 @@ function setLifePoints(state: DuelState, playerId: PlayerId, value: number): voi
     state.winner = opponentOf(playerId);
     addEvent(state, "lp-zero", `${playerId} has 0 Life Points.`);
   }
+
+  state.coreState = coreStateFromLegacy(state);
 }
 
 function discardDownToHandLimit(state: DuelState, playerId: PlayerId): void {
@@ -1507,12 +1763,14 @@ function result(state: DuelState, eventStart: number): DuelResult {
 }
 
 function addEvent(state: DuelState, type: string, message: string): void {
-  state.events = [...state.events, createEvent(type, message)].slice(-40);
+  state.events = [...state.events, createEvent(state, type, message)].slice(-40);
 }
 
-function createEvent(type: string, message: string): DuelEvent {
+function createEvent(state: DuelState, type: string, message: string): DuelEvent {
+  const eventNumber = (state.coreState?.eventIds.length ?? 0) + state.events.length + 1;
+
   return {
-    id: crypto.randomUUID(),
+    id: `compat-${eventNumber.toString().padStart(4, "0")}`,
     type,
     message,
   };

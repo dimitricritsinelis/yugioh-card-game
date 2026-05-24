@@ -104,7 +104,7 @@ function assertSupportedCardIds(deck: DeckList): void {
     const coverage = getCardCoverage(card);
 
     expect(isInitialSupportedCard(card)).toBe(true);
-    expect(coverage.status === "implemented" || coverage.status === "vanilla").toBe(true);
+    expect(["goatVanilla", "goatTemplate", "goatCustom"]).toContain(coverage.status);
   }
 }
 

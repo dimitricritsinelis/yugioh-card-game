@@ -2,7 +2,7 @@
 
 ## Current phase
 
-Playable-engine queue complete for the simplified scope.
+Full card-accountability readiness. The simplified playable engine is usable for supported exact-40 Main Deck duels, but strict final acceptance remains blocked by GOAT-legal unsupported cards.
 
 ## Completed
 
@@ -48,23 +48,27 @@ Playable-engine queue complete for the simplified scope.
 - T-071: Golden gameplay scenarios added for supported-card interactions: Tribe-Infecting Virus post-summon priority, Breaker counter timing, Torrential Tribute, MST chain order, Book of Moon target/position resolution, Mirror Force, Sakuretsu Armor, Damage Step restrictions, deck-out, LP-zero, and a frontend adapter smoke flow from supported deck start through summon/set/attack.
 - T-072: Determinism and mutation safety tests added. Dedicated guards now verify same initial state plus same commands gives identical reducer results, same seed gives identical opening hands, representative reducer commands do not mutate deep-frozen inputs, and engine runtime modules do not call `Math.random` or `Date.now`.
 - T-073: Runtime card-text parsing guard added. Engine runtime modules are statically checked for behavior-parser imports/calls, and card `text` access is restricted to catalog/display normalization files rather than effect or rule execution.
-- T-074: Playable coverage report added. The report separates full local card-pool size from current playable support, counts vanilla and implemented playable cards, distinguishes unsupported cards from Extra/Fusion scope blocks and deck-validation scope blocks, and reports supported playable deck contents with zero unsupported cards.
-- T-075: Final playable-engine audit completed in `docs/playable-engine-audit.md`. Final validation passed, acceptance evidence is recorded, and known limitations are explicit.
+- T-074: Full card-accountability manifest scaffolding added. Every local `cards.json` passcode has exactly one status, coverage reports include status counts, GOAT-legal unsupported cards, and `strictFinalAcceptanceReady`, and supported playable deck contents still validate with zero unsupported cards.
+- T-075: Playable-engine audit refreshed in `docs/playable-engine-audit.md`. Acceptance evidence is recorded for the simplified playable scope, and strict full-card readiness is explicitly not claimed.
+- Audit blocker fix: Frontend-compatible gameplay actions now route through core reducer commands for draw, phase, End Turn, summon/set, Spell/Trap set, activation, attacks, priority, chain resolution, and prompts. Dev card movement is explicit unsupported core behavior rather than mutable legacy movement.
+- Audit blocker fix: Frontend-path regression tests prove Pot of Greed and Mystical Space Typhoon reach implemented scripts through UI-facing helpers/compat actions and keep `coreState` synchronized.
+- Audit blocker fix: Compatibility events are deterministic, and chain resolution now fail-closes with explicit events for malformed, missing-script, and missing-resolution links.
+- Audit blocker fix: Runtime card-text parsing guards now include engine runtime files plus `src/cardData.ts`, `src/gameLogic.ts`, and adapter paths.
 
 ## In Progress
 
-- None.
+- Full card-accountability readiness.
 
 ## Next task
 
-None. The queue is complete for the simplified playable-engine scope.
+Implement card-family batches and reduce the GOAT-legal unsupported count. Strict final acceptance remains false until that count reaches zero.
 
 ## Validation commands
 
 - `npm run typecheck`: PASS
   - `tsc -b` completed with exit code 0.
 - `npm test`: PASS
-  - Vitest reported 44 test files passed and 268 tests passed.
+  - Vitest reported 47 test files passed and 280 tests passed.
 - `npm run build`: PASS
   - `tsc -b && vite build` completed with exit code 0.
 
@@ -73,7 +77,8 @@ Not run for T-001 because it is docs-only.
 ## Known risks
 
 - Current engine is prototype-level.
-- Full GOAT support requires scripts/templates, not card-text parsing.
+- Full GOAT support requires scripts/templates and tests, not card-text parsing.
+- The manifest accounts for all 1,704 local cards, but 1,267 GOAT-legal cards remain `goatUnsupported`; `strictFinalAcceptanceReady` is therefore false.
 - Unsupported effects must be explicit.
 - Only the T-051 scripted Spell cards, T-052 scripted Trap cards, T-053 scripted Monster cards, and T-054 custom staples are marked implemented in the default registry; future implemented status entries require scripts/templates and tests.
 - Existing prototype tests use the explicit `allowUnsupportedCards` test/dev escape hatch where they exercise unsupported cards.
@@ -81,8 +86,7 @@ Not run for T-001 because it is docs-only.
 - T-021 helpers target the new core state model; the prototype reducer has not yet been migrated to these helpers.
 - T-022 defines the core typed event model; the prototype reducer still emits its legacy stringly typed `DuelEvent` objects until the compatibility/reducer transition tasks wire it over.
 - T-023 keeps the existing `shuffleSeeded` compatibility wrapper, backed by the new serializable RNG state.
-- T-030 implements core phase flow; the legacy UI facade still has compatibility phase code until frontend routing moves fully to core reducer behavior.
-- T-031 implements core summon/set/flip summon rules; the legacy UI facade still has compatibility summon code until frontend routing moves fully to core reducer behavior.
+- T-030/T-031 core phase and summon/set behavior are now used by the frontend-compatible gameplay path; the legacy UI shape remains as an adapter/projection around core state.
 - T-034 implements core terminal win/loss conditions; Ring of Destruction from T-054 now also covers simultaneous 0 LP draw handling for equal effect damage.
 - T-040 adds the executable script registry shape, and production entries must remain backed by tested templates/scripts.
 - T-041 auto-generates vanilla monster scripts from structured classifications only; scripted non-vanilla effects remain future work.

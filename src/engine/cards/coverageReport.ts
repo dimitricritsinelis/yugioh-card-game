@@ -1,7 +1,13 @@
 import type { CardRecord } from "../../types";
 import { validateDeck } from "../deckValidation";
 import type { DeckList } from "../types";
-import { getCardCoverage, getCoverageRejectionReason, type CardCoverageStatus } from "./coverage";
+import {
+  CARD_COVERAGE_STATUSES,
+  getCardCoverage,
+  getCoverageRejectionReason,
+  isPlayableCoverageStatus,
+  type CardCoverageStatus,
+} from "./coverage";
 import { clonePlayableDeck, PLAYABLE_DECK_FIXTURES } from "../testing/playableDecks";
 
 export interface CoverageReportCard {
@@ -20,7 +26,7 @@ export interface SupportedPlayableDeckCardReport {
   readonly cardId: string;
   readonly name: string;
   readonly copies: number;
-  readonly status: Extract<CardCoverageStatus, "implemented" | "vanilla">;
+  readonly status: Extract<CardCoverageStatus, "goatTemplate" | "goatCustom" | "goatVanilla">;
 }
 
 export interface SupportedPlayableDeckReport {
@@ -38,43 +44,55 @@ export interface SupportedPlayableDeckReport {
 export interface PlayableCoverageReport {
   readonly scope: {
     readonly playableDeckPolicy: "exactly-40-main-deck-no-side-no-extra";
-    readonly fullCardPoolImplementationRequired: false;
-    readonly playableStatuses: readonly ["implemented", "vanilla"];
-    readonly blockedStatuses: readonly ["unsupported", "blockedNoExtraDeck", "blockedByScope"];
+    readonly fullCardPoolImplementationRequired: true;
+    readonly playableStatuses: readonly ["goatVanilla", "goatTemplate", "goatCustom"];
+    readonly blockedStatuses: readonly ["goatForbiddenButScripted", "goatDeckBlocked", "goatUnsupported", "notInGoatPool"];
   };
   readonly totalLocalCards: number;
+  readonly statusCounts: Readonly<Record<CardCoverageStatus, number>>;
+  readonly bucketsByStatus: Readonly<Record<CardCoverageStatus, CoverageReportBucket>>;
   readonly playableCardCount: number;
-  readonly vanillaPlayable: CoverageReportBucket;
-  readonly implementedPlayable: CoverageReportBucket;
-  readonly unsupportedBlocked: CoverageReportBucket;
-  readonly blockedByNoExtraDeckScope: CoverageReportBucket;
-  readonly blockedByDeckValidation: CoverageReportBucket;
+  readonly goatLegalUnsupportedCount: number;
+  readonly goatLegalUnsupportedCards: readonly CoverageReportCard[];
+  readonly strictFinalAcceptanceReady: boolean;
   readonly supportedPlayableDecks: readonly SupportedPlayableDeckReport[];
 }
 
 export function buildPlayableCoverageReport(cards: readonly CardRecord[]): PlayableCoverageReport {
   const entries = cards.map((card) => toCoverageReportCard(card));
-
-  const vanillaPlayable = bucket(entries, "vanilla");
-  const implementedPlayable = bucket(entries, "implemented");
-  const unsupportedBlocked = bucket(entries, "unsupported");
-  const blockedByNoExtraDeckScope = bucket(entries, "blockedNoExtraDeck");
-  const blockedByDeckValidation = bucket(entries, "blockedByScope");
+  const bucketsByStatus = Object.freeze(
+    Object.fromEntries(
+      CARD_COVERAGE_STATUSES.map((status) => [status, bucket(entries, status)]),
+    ) as Record<CardCoverageStatus, CoverageReportBucket>,
+  );
+  const statusCounts = Object.freeze(
+    Object.fromEntries(
+      CARD_COVERAGE_STATUSES.map((status) => [status, bucketsByStatus[status].count]),
+    ) as Record<CardCoverageStatus, number>,
+  );
+  const playableCardCount =
+    statusCounts.goatVanilla + statusCounts.goatTemplate + statusCounts.goatCustom;
+  const goatLegalUnsupportedCards = bucketsByStatus.goatUnsupported.cards;
 
   return Object.freeze({
     scope: Object.freeze({
       playableDeckPolicy: "exactly-40-main-deck-no-side-no-extra",
-      fullCardPoolImplementationRequired: false,
-      playableStatuses: Object.freeze(["implemented", "vanilla"] as const),
-      blockedStatuses: Object.freeze(["unsupported", "blockedNoExtraDeck", "blockedByScope"] as const),
+      fullCardPoolImplementationRequired: true,
+      playableStatuses: Object.freeze(["goatVanilla", "goatTemplate", "goatCustom"] as const),
+      blockedStatuses: Object.freeze([
+        "goatForbiddenButScripted",
+        "goatDeckBlocked",
+        "goatUnsupported",
+        "notInGoatPool",
+      ] as const),
     }),
     totalLocalCards: cards.length,
-    playableCardCount: vanillaPlayable.count + implementedPlayable.count,
-    vanillaPlayable,
-    implementedPlayable,
-    unsupportedBlocked,
-    blockedByNoExtraDeckScope,
-    blockedByDeckValidation,
+    statusCounts,
+    bucketsByStatus,
+    playableCardCount,
+    goatLegalUnsupportedCount: goatLegalUnsupportedCards.length,
+    goatLegalUnsupportedCards,
+    strictFinalAcceptanceReady: goatLegalUnsupportedCards.length === 0,
     supportedPlayableDecks: Object.freeze(
       PLAYABLE_DECK_FIXTURES.map((fixture) =>
         buildSupportedPlayableDeckReport(fixture.id, fixture.displayName, clonePlayableDeck(fixture.deck), cards),
@@ -126,7 +144,7 @@ function buildSupportedPlayableDeckReport(
 
     const status = getCardCoverage(card).status;
 
-    if (status !== "implemented" && status !== "vanilla") {
+    if (!isPlayableCoverageStatus(status)) {
       return null;
     }
 
@@ -139,9 +157,9 @@ function buildSupportedPlayableDeckReport(
   });
   const unsupportedCardIds = [...counts.keys()].filter((cardId) => {
     const card = cardById.get(cardId);
-    const status = card ? getCardCoverage(card).status : "unsupported";
+    const status = card ? getCardCoverage(card).status : "goatUnsupported";
 
-    return status !== "implemented" && status !== "vanilla";
+    return !isPlayableCoverageStatus(status);
   });
 
   return Object.freeze({

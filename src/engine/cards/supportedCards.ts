@@ -3,6 +3,7 @@ import type { DeckList } from "../types";
 import {
   getCardCoverage,
   isPlayableCardRecord,
+  isPlayableCoverageStatus,
   type CardCoverageRegistry,
   type CardCoverageStatus,
 } from "./coverage";
@@ -10,7 +11,7 @@ import { ENGINE_CARD_COVERAGE } from "./registry";
 
 export interface SupportedCardEntry {
   readonly cardId: string;
-  readonly status: Extract<CardCoverageStatus, "implemented" | "vanilla">;
+  readonly status: Extract<CardCoverageStatus, "goatTemplate" | "goatCustom" | "goatVanilla">;
   readonly source: "implemented-script" | "vanilla-template";
 }
 
@@ -67,7 +68,7 @@ export function buildInitialSupportedCardPool(
   const entries = cards.flatMap((card): SupportedCardEntry[] => {
     const coverage = getCardCoverage(card, registry);
 
-    if (coverage.status !== "implemented" && coverage.status !== "vanilla") {
+    if (!isPlayableCoverageStatus(coverage.status)) {
       return [];
     }
 
@@ -75,7 +76,7 @@ export function buildInitialSupportedCardPool(
       Object.freeze({
         cardId: card.passcode,
         status: coverage.status,
-        source: coverage.status === "implemented" ? "implemented-script" : "vanilla-template",
+        source: coverage.status === "goatVanilla" ? "vanilla-template" : "implemented-script",
       }),
     ];
   });

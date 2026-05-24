@@ -382,17 +382,17 @@ export const CUSTOM_STAPLE_CARD_SCRIPTS: readonly CardScript[] = Object.freeze([
 ]);
 
 export const CUSTOM_STAPLE_CARD_COVERAGE: CardCoverageRegistry = Object.freeze({
-  [BREAKER_THE_MAGICAL_WARRIOR_ID]: "implemented",
-  [TRIBE_INFECTING_VIRUS_ID]: "implemented",
-  [SINISTER_SERPENT_ID]: "implemented",
-  [DD_WARRIOR_LADY_ID]: "implemented",
-  [INJECTION_FAIRY_LILY_ID]: "implemented",
-  [REFLECT_BOUNDER_ID]: "implemented",
-  [JINZO_ID]: "implemented",
-  [RING_OF_DESTRUCTION_ID]: "implemented",
-  [CALL_OF_THE_HAUNTED_ID]: "implemented",
-  [PREMATURE_BURIAL_ID]: "implemented",
-  [SNATCH_STEAL_ID]: "implemented",
+  [BREAKER_THE_MAGICAL_WARRIOR_ID]: "goatCustom",
+  [TRIBE_INFECTING_VIRUS_ID]: "goatCustom",
+  [SINISTER_SERPENT_ID]: "goatCustom",
+  [DD_WARRIOR_LADY_ID]: "goatCustom",
+  [INJECTION_FAIRY_LILY_ID]: "goatCustom",
+  [REFLECT_BOUNDER_ID]: "goatCustom",
+  [JINZO_ID]: "goatCustom",
+  [RING_OF_DESTRUCTION_ID]: "goatCustom",
+  [CALL_OF_THE_HAUNTED_ID]: "goatCustom",
+  [PREMATURE_BURIAL_ID]: "goatCustom",
+  [SNATCH_STEAL_ID]: "goatCustom",
 });
 
 export function tribeEffectId(monsterType: string): string {

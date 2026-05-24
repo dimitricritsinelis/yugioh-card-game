@@ -35,6 +35,7 @@ import type {
   DuelFinishedEvent,
   EffectActivatedEvent,
   EffectNotImplementedEvent,
+  EffectResolvedWithoutEffectEvent,
   DuelStartedEvent,
   EngineEvent,
   IllegalActionEvent,
@@ -98,7 +99,7 @@ import {
   playerWithZeroLp,
   type LossReason,
 } from "./rules/winConditions";
-import type { DeckList, PlayerId } from "./types";
+import type { DeckList, PlayerId, TurnMode } from "./types";
 
 const DEFAULT_SEED = "goat-core-duel";
 const STARTING_LIFE_POINTS = 8000;
@@ -111,6 +112,7 @@ export interface CreateCoreDuelConfig {
   readonly decks: Readonly<Record<PlayerId, DeckList>>;
   readonly seed?: string;
   readonly firstPlayer?: PlayerId;
+  readonly mode?: TurnMode;
   readonly allowUnsupportedCards?: boolean;
   readonly deckValidation?: DeckValidationOptions;
   readonly shuffleDecks?: boolean;
@@ -160,10 +162,15 @@ export function createDuel(config: CreateCoreDuelConfig): CreateDuelResult {
   const state: DuelState = {
     id: `duel-${seed}`,
     seed,
+    turnMode: config.mode ?? "match",
     turn: 1,
     phase: "DP",
     activePlayer: firstPlayer,
     priorityPlayer: firstPlayer,
+    turnFlags: {
+      drawnThisTurn: false,
+      battlePhaseConducted: false,
+    },
     priority: createPriorityWindow(firstPlayer, "phase-start"),
     damageStep: closeDamageStep(),
     cardDefinitions: buildDuelCardDefinitions(config.cards, config.decks),
@@ -240,7 +247,7 @@ function changePhase(state: DuelState, command: Extract<EngineCommand, { type: "
   let nextState = cloneDuelState(state);
   const events: EngineEvent[] = [];
 
-  if (state.phase === "DP") {
+  if (state.phase === "DP" && !state.turnFlags?.drawnThisTurn) {
     const drawResult = drawCards(nextState, { type: "draw-card", playerId: command.playerId });
 
     nextState = drawResult.state;
@@ -260,6 +267,11 @@ function changePhase(state: DuelState, command: Extract<EngineCommand, { type: "
         {
           ...nextState,
           phase: command.phase,
+          turnFlags: {
+            drawnThisTurn: nextState.turnFlags?.drawnThisTurn ?? state.turnFlags?.drawnThisTurn ?? false,
+            battlePhaseConducted:
+              command.phase === "BP" || nextState.turnFlags?.battlePhaseConducted === true,
+          },
           damageStep: closeDamageStep(),
         },
         command.playerId,
@@ -290,7 +302,7 @@ function endTurn(state: DuelState, command: Extract<EngineCommand, { type: "end-
   const discardEvents = discardResult.discards.map((discard) =>
     createHandSizeDiscardEvent(eventBuilder, command.playerId, discard, state.turn),
   );
-  const nextPlayer = opponentOf(command.playerId);
+  const nextPlayer = state.turnMode === "solo" ? command.playerId : opponentOf(command.playerId);
   const nextTurn = state.turn + 1;
   const phaseChanged = createPhaseChangedEvent(eventBuilder, nextPlayer, "EP", "DP", nextTurn);
   const turnStarted = createTurnStartedEvent(eventBuilder, nextPlayer, nextTurn);
@@ -304,6 +316,10 @@ function endTurn(state: DuelState, command: Extract<EngineCommand, { type: "end-
     turn: nextTurn,
     phase: "DP",
     activePlayer: nextPlayer,
+    turnFlags: {
+      drawnThisTurn: false,
+      battlePhaseConducted: false,
+    },
     damageStep: closeDamageStep(),
     ...priorityWindowFields(nextPlayer, "phase-start"),
     players: {
@@ -916,12 +932,16 @@ function resolveChain(state: DuelState, command: Extract<EngineCommand, { type: 
   }
 
   const resolved = resolveChainLifo(state.chain);
-  const invalidTarget = resolved.resolvedLinks
-    .map((link) => validateStoredTargets(state, link.playerId, link.targetSpecs, link.selectedTargets))
-    .find((targetResult) => !targetResult.valid);
+  const brokenLink = resolved.resolvedLinks
+    .map((link) => validateResolvableChainLink(state, link))
+    .find((linkResult) => linkResult !== null);
 
-  if (invalidTarget) {
-    return illegalResult(state, command, invalidTarget.reason ?? "Stored targets are no longer valid.", command.playerId);
+  if (brokenLink) {
+    if (brokenLink.kind === "effect-not-implemented") {
+      return unresolvedChainLinkResult(state, command, brokenLink.link, brokenLink.reason);
+    }
+
+    return illegalResult(state, command, brokenLink.reason, command.playerId);
   }
 
   const eventBuilder = createEventBuilder(state.eventIds.length);
@@ -945,6 +965,54 @@ function resolveChain(state: DuelState, command: Extract<EngineCommand, { type: 
   const triggers = collectTriggers(nextState, events, "chain-resolved", eventBuilder);
 
   return result(command, triggers.state, [...events, ...triggers.events], triggers.prompts);
+}
+
+type UnresolvableChainLink =
+  | { readonly kind: "illegal"; readonly link: ChainLink; readonly reason: string }
+  | { readonly kind: "effect-not-implemented"; readonly link: ChainLink; readonly reason: string };
+
+function validateResolvableChainLink(state: DuelState, link: ChainLink): UnresolvableChainLink | null {
+  if (!link.cardId || !link.effectId || !link.sourceInstanceId) {
+    return {
+      kind: "illegal",
+      link,
+      reason: `Malformed chain link ${link.id} cannot be resolved.`,
+    };
+  }
+
+  const script = getCardScriptForDefinitions(link.cardId, state.cardDefinitions, state.cardScripts);
+
+  if (!script) {
+    return {
+      kind: "effect-not-implemented",
+      link,
+      reason: `card ${link.cardId} has no implemented effect script`,
+    };
+  }
+
+  const effect = script.effects.find((candidate) => candidate.id === link.effectId);
+
+  if (!effect || !effect.implemented) {
+    return {
+      kind: "effect-not-implemented",
+      link,
+      reason: `effect ${link.effectId} is not implemented for card ${link.cardId}`,
+    };
+  }
+
+  if (effect.kind === "lingering" && effect.lingering) {
+    return null;
+  }
+
+  if (!effect.resolution) {
+    return {
+      kind: "effect-not-implemented",
+      link,
+      reason: `effect ${link.effectId} for card ${link.cardId} has no implemented resolution`,
+    };
+  }
+
+  return null;
 }
 
 function applyResolvedChainLinkEffects(
@@ -976,6 +1044,22 @@ function applyResolvedChainLinkEffect(
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
   const script = getCardScriptForDefinitions(link.cardId, state.cardDefinitions, state.cardScripts);
   const effect = script?.effects.find((candidate) => candidate.id === link.effectId);
+
+  const targetValidation = validateStoredTargets(state, link.playerId, link.targetSpecs, link.selectedTargets);
+
+  if (!targetValidation.valid) {
+    const reason = targetValidation.reason ?? "Stored targets are no longer valid.";
+    const skipped = createEffectResolvedWithoutEffectEvent(eventBuilder, link, reason, state.turn);
+    const sourceMoved =
+      effect?.resolution?.sendSourceToGraveyard === false
+        ? { state, events: [] as EngineEvent[] }
+        : sendSourceToGraveyard(state, link, eventBuilder);
+
+    return {
+      state: sourceMoved.state,
+      events: [skipped, ...sourceMoved.events],
+    };
+  }
 
   if (effect?.kind === "lingering" && effect.implemented && effect.lingering) {
     return {
@@ -2540,6 +2624,10 @@ function drawCards(state: DuelState, command: Extract<EngineCommand, { type: "dr
     return illegalResult(state, command, "Cards can only be drawn for turn during the Draw Phase.", command.playerId);
   }
 
+  if (state.turnFlags?.drawnThisTurn) {
+    return illegalResult(state, command, "The turn player has already drawn this turn.", command.playerId);
+  }
+
   const count = command.count ?? 1;
 
   if (!Number.isInteger(count) || count < 1) {
@@ -2577,7 +2665,17 @@ function drawCards(state: DuelState, command: Extract<EngineCommand, { type: "dr
 
   const terminal = applyAutomaticWinConditions(appendEventIds(nextState, events), eventBuilder);
 
-  return result(command, terminal.state, [...events, ...terminal.events]);
+  return result(
+    command,
+    {
+      ...terminal.state,
+      turnFlags: {
+        drawnThisTurn: true,
+        battlePhaseConducted: terminal.state.turnFlags?.battlePhaseConducted ?? false,
+      },
+    },
+    [...events, ...terminal.events],
+  );
 }
 
 function validateTurnCommand(
@@ -2708,7 +2806,35 @@ function missingEffectResult(
   };
   const event = createEffectNotImplementedEvent(eventBuilder, command.playerId, cardId, instanceId, state.turn);
 
-  return result(command, state, [event], [], [error]);
+  return result(command, appendEventIds(cloneDuelState(state), [event]), [event], [], [error]);
+}
+
+function unresolvedChainLinkResult(
+  state: DuelState,
+  command: Extract<EngineCommand, { type: "resolve-chain" }>,
+  link: ChainLink,
+  reason: string,
+): EngineResult {
+  const eventBuilder = createEventBuilder(state.eventIds.length);
+  const message = `${EFFECT_NOT_IMPLEMENTED}: ${reason}.`;
+  const error: EngineError = {
+    code: "unsupported-card",
+    message,
+    playerId: link.playerId,
+    commandType: command.type,
+    cardId: link.cardId,
+    instanceId: link.sourceInstanceId,
+  };
+  const event = createEffectNotImplementedEvent(
+    eventBuilder,
+    link.playerId,
+    link.cardId,
+    link.sourceInstanceId,
+    state.turn,
+    message,
+  );
+
+  return result(command, appendEventIds(cloneDuelState(state), [event]), [event], [], [error]);
 }
 
 function createPromptResult(
@@ -3027,7 +3153,7 @@ function createAttackDeclaredEvent(
   return {
     id: builder.nextId(),
     type: "attack-declared",
-    message: defender ? `${playerId} declared an attack on a monster.` : `${playerId} declared a direct attack.`,
+    message: defender ? `${playerId} declared an attack on a monster.` : `${playerId} attacked directly.`,
     playerId,
     attackerInstanceId: attacker.instanceId,
     attackerCardId: attacker.cardId,
@@ -3299,17 +3425,38 @@ function createChainResolvedEvent(
   };
 }
 
+function createEffectResolvedWithoutEffectEvent(
+  builder: EventBuilder,
+  chainLink: ChainLink,
+  reason: string,
+  turn: number,
+): EffectResolvedWithoutEffectEvent {
+  return {
+    id: builder.nextId(),
+    type: "effect-resolved-without-effect",
+    message: `Chain link ${chainLink.id} resolved without effect: ${reason}`,
+    playerId: chainLink.playerId,
+    chainLinkId: chainLink.id,
+    sourceInstanceId: chainLink.sourceInstanceId,
+    cardId: chainLink.cardId,
+    effectId: chainLink.effectId,
+    reason,
+    turn,
+  };
+}
+
 function createEffectNotImplementedEvent(
   builder: EventBuilder,
   playerId: PlayerId,
   cardId: string,
   instanceId: string,
   turn: number,
+  message = `${EFFECT_NOT_IMPLEMENTED}: card ${cardId} has no implemented effect script.`,
 ): EffectNotImplementedEvent {
   return {
     id: builder.nextId(),
     type: "effect-not-implemented",
-    message: `${EFFECT_NOT_IMPLEMENTED}: card ${cardId} has no implemented effect script.`,
+    message,
     playerId,
     cardId,
     instanceId,

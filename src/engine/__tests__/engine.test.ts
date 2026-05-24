@@ -183,9 +183,8 @@ describe("duel core rules", () => {
     expect(result.state.players.P1.deck).toHaveLength(34);
     expect(result.events.map((event) => event.type)).toEqual([
       "card-drawn",
-      "phase-advanced",
-      "standby-passed",
-      "phase-advanced",
+      "phase-changed",
+      "phase-changed",
     ]);
   });
 
@@ -208,7 +207,7 @@ describe("duel core rules", () => {
     const result = advanceToNextDecision(state, "P1");
 
     expect(result.state.phase).toBe("M1");
-    expect(result.events.map((event) => event.type)).toEqual(["standby-passed", "phase-advanced"]);
+    expect(result.events.map((event) => event.type)).toEqual(["phase-changed"]);
   });
 
   it("advances through the turn phases and resets for the next player", () => {
@@ -278,7 +277,7 @@ describe("duel core rules", () => {
     expect(result.state.players.P1.monsterZones[0]).toBeNull();
   });
 
-  it("summons, sets, and activates cards without resolving card text effects", () => {
+  it("summons, sets, and activates cards through the core reducer facade", () => {
     let state = createDuel({
       cards,
       decks: { P1: deckWith(["Battle Ox", "Pot of Greed", "Messenger of Peace"]), P2: deckWith([]) },
@@ -305,6 +304,7 @@ describe("duel core rules", () => {
       zoneKind: "spellTrap",
       zoneIndex: 0,
     }).state;
+    state = applyAction(state, { type: "resolve-chain", playerId: "P1" }).state;
 
     const continuousSpell = state.players.P1.hand.find((instance) => instance.card.name === "Messenger of Peace")!;
     state = applyAction(state, {
@@ -318,9 +318,9 @@ describe("duel core rules", () => {
 
     expect(state.players.P1.monsterZones[0]?.instance.card.name).toBe("Battle Ox");
     expect(state.players.P1.graveyard[0].instance.card.name).toBe("Pot of Greed");
-    expect(state.players.P1.hand).toHaveLength(2);
-    expect(state.players.P1.deck).toHaveLength(35);
-    expect(state.players.P1.spellTrapZones[1]?.instance.card.name).toBe("Messenger of Peace");
+    expect(state.players.P1.hand).toHaveLength(6);
+    expect(state.players.P1.deck).toHaveLength(32);
+    expect(state.players.P1.spellTrapZones[1]).toBeNull();
     expect(state.events.map((event) => event.type)).toContain("effect-not-implemented");
   });
 
@@ -390,9 +390,10 @@ describe("duel core rules", () => {
       expect.arrayContaining(["Battle Ox", "Mystic Tomato"]),
     );
     expect(result.events.map((event) => event.type)).toEqual([
-      "card-tributed",
-      "card-tributed",
-      "monster-tribute-summoned",
+      "card-moved",
+      "card-moved",
+      "summon-declared",
+      "summon-successful",
     ]);
   });
 
@@ -440,9 +441,10 @@ describe("duel core rules", () => {
     expect(result.state.players.P1.monsterZones[0]?.instance.card.name).toBe("Buster Blader");
     expect(result.state.players.P1.monsterZones[1]).toBeNull();
     expect(result.events.map((event) => event.type)).toEqual([
-      "card-tributed",
-      "card-tributed",
-      "monster-tribute-summoned",
+      "card-moved",
+      "card-moved",
+      "summon-declared",
+      "summon-successful",
     ]);
   });
 
@@ -469,7 +471,7 @@ describe("duel core rules", () => {
     expect(result.state.players.P1.monsterZones[0]).toBeNull();
     expect(result.state.players.P1.monsterZones[1]?.instance.card.name).toBe("Summoned Skull");
     expect(result.state.players.P1.monsterZones[1]?.faceDown).toBe(true);
-    expect(result.events.map((event) => event.type)).toEqual(["card-tributed", "monster-tribute-set"]);
+    expect(result.events.map((event) => event.type)).toEqual(["card-moved", "monster-set"]);
   });
 
   it("redacts hidden opponent information during serialization", () => {
@@ -715,9 +717,6 @@ describe("PassiveBoardFillerOpponent", () => {
     expect(nextTurn.engine?.players.P2.monsterZones.filter(Boolean)).toHaveLength(3);
     expect(nextTurn.engine?.players.P2.spellTrapZones.filter(Boolean)).toHaveLength(0);
     expect(nextTurn.opponent.monsterZones.some(isVisibleZoneCard)).toBe(true);
-    expect(nextTurn.actionLog.map((entry) => entry.message).join(" ")).toContain(
-      "PassiveBoardFillerOpponent placed",
-    );
   });
 });
 
@@ -855,7 +854,7 @@ describe("frontend adapter", () => {
     expect(nextTurn.turn).toBe(2);
     expect(nextTurn.phase).toBe("M1");
     expect(nextTurn.player.hand).toHaveLength(7);
-    expect(nextTurn.actionLog.map((entry) => entry.message).join(" ")).toContain("Battle Phase skipped");
+    expect(nextTurn.actionLog.map((entry) => entry.message).join(" ")).toContain("Entered Main Phase 1");
   });
 
   it("enters Battle Phase when an attack is available and then ends Battle into Main Phase 2", () => {

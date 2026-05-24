@@ -1,12 +1,15 @@
 export { validateDeck } from "./deckValidation";
 export type { DeckValidationOptions } from "./deckValidation";
 export {
+  CARD_COVERAGE_MANIFEST,
+  CARD_COVERAGE_STATUSES,
   getCardCoverage,
   getCoverageRejectionReason,
   isPlayableCard,
   isPlayableCardRecord,
   isPlayableCoverageStatus,
 } from "./cards/coverage";
+export { buildPlayableCoverageReport } from "./cards/coverageReport";
 export {
   CARD_SCRIPTS,
   createCardScriptRegistry,

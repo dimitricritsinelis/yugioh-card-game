@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
-import { getCardCoverage, type CardCoverageStatus } from "../cards/coverage";
+import { CARD_COVERAGE_STATUSES, getCardCoverage, type CardCoverageStatus } from "../cards/coverage";
 import { buildPlayableCoverageReport } from "../cards/coverageReport";
 import { PLAYABLE_DECK_FIXTURES } from "../testing/playableDecks";
 
@@ -11,52 +11,48 @@ const THOUSAND_EYES_RESTRICT_ID = "63519819";
 const BUTTERFLY_DAGGER_ELMA_ID = "69243953";
 
 describe("playable coverage report", () => {
-  it("summarizes playable support separately from full card-pool support", () => {
+  it("summarizes full card accountability separately from current playable support", () => {
     const report = buildPlayableCoverageReport(cards);
     const expectedCounts = coverageCounts();
-    const reportedTotal =
-      report.vanillaPlayable.count +
-      report.implementedPlayable.count +
-      report.unsupportedBlocked.count +
-      report.blockedByNoExtraDeckScope.count +
-      report.blockedByDeckValidation.count;
+    const reportedTotal = CARD_COVERAGE_STATUSES.reduce(
+      (total, status) => total + report.statusCounts[status],
+      0,
+    );
 
     expect(report.scope).toMatchObject({
       playableDeckPolicy: "exactly-40-main-deck-no-side-no-extra",
-      fullCardPoolImplementationRequired: false,
-      playableStatuses: ["implemented", "vanilla"],
-      blockedStatuses: ["unsupported", "blockedNoExtraDeck", "blockedByScope"],
+      fullCardPoolImplementationRequired: true,
+      playableStatuses: ["goatVanilla", "goatTemplate", "goatCustom"],
+      blockedStatuses: ["goatForbiddenButScripted", "goatDeckBlocked", "goatUnsupported", "notInGoatPool"],
     });
     expect(report.totalLocalCards).toBe(cards.length);
-    expect(report.playableCardCount).toBe(report.vanillaPlayable.count + report.implementedPlayable.count);
-    expect(report.playableCardCount).toBeLessThan(report.totalLocalCards);
+    expect(report.statusCounts).toEqual(expectedCounts);
     expect(reportedTotal).toBe(report.totalLocalCards);
-    expect(report.vanillaPlayable.count).toBe(expectedCounts.vanilla);
-    expect(report.implementedPlayable.count).toBe(expectedCounts.implemented);
-    expect(report.unsupportedBlocked.count).toBe(expectedCounts.unsupported);
-    expect(report.blockedByNoExtraDeckScope.count).toBe(expectedCounts.blockedNoExtraDeck);
-    expect(report.blockedByDeckValidation.count).toBe(expectedCounts.blockedByScope);
+    expect(report.playableCardCount).toBe(
+      report.statusCounts.goatVanilla + report.statusCounts.goatTemplate + report.statusCounts.goatCustom,
+    );
+    expect(report.goatLegalUnsupportedCount).toBe(report.bucketsByStatus.goatUnsupported.count);
+    expect(report.goatLegalUnsupportedCards).toEqual(report.bucketsByStatus.goatUnsupported.cards);
+    expect(report.strictFinalAcceptanceReady).toBe(false);
   });
 
-  it("keeps unsupported, Extra/Fusion scope, and deck-validation blocks distinct", () => {
+  it("keeps unsupported, Extra/Fusion scope, and non-playable-pool blocks distinct", () => {
     const report = buildPlayableCoverageReport(cards);
 
-    expect(cardIds(report.unsupportedBlocked.cards)).toContain(GRACEFUL_CHARITY_ID);
-    expect(cardIds(report.blockedByNoExtraDeckScope.cards)).toContain(THOUSAND_EYES_RESTRICT_ID);
-    expect(cardIds(report.blockedByDeckValidation.cards)).toContain(BUTTERFLY_DAGGER_ELMA_ID);
-    expect(report.unsupportedBlocked.cards.find((entry) => entry.cardId === GRACEFUL_CHARITY_ID)).toMatchObject({
-      status: "unsupported",
+    expect(cardIds(report.bucketsByStatus.goatUnsupported.cards)).toContain(GRACEFUL_CHARITY_ID);
+    expect(cardIds(report.bucketsByStatus.goatDeckBlocked.cards)).toContain(THOUSAND_EYES_RESTRICT_ID);
+    expect(cardIds(report.bucketsByStatus.notInGoatPool.cards)).toContain(BUTTERFLY_DAGGER_ELMA_ID);
+    expect(report.bucketsByStatus.goatUnsupported.cards.find((entry) => entry.cardId === GRACEFUL_CHARITY_ID)).toMatchObject({
+      status: "goatUnsupported",
       reason: "not supported in playable decks",
     });
-    expect(
-      report.blockedByNoExtraDeckScope.cards.find((entry) => entry.cardId === THOUSAND_EYES_RESTRICT_ID),
-    ).toMatchObject({
-      status: "blockedNoExtraDeck",
+    expect(report.bucketsByStatus.goatDeckBlocked.cards.find((entry) => entry.cardId === THOUSAND_EYES_RESTRICT_ID)).toMatchObject({
+      status: "goatDeckBlocked",
       reason: "blocked because Extra/Fusion Decks are outside playable scope",
     });
-    expect(report.blockedByDeckValidation.cards.find((entry) => entry.cardId === BUTTERFLY_DAGGER_ELMA_ID)).toMatchObject({
-      status: "blockedByScope",
-      reason: "blocked by the current playable scope",
+    expect(report.bucketsByStatus.notInGoatPool.cards.find((entry) => entry.cardId === BUTTERFLY_DAGGER_ELMA_ID)).toMatchObject({
+      status: "notInGoatPool",
+      reason: "not in the supported GOAT playable pool",
     });
   });
 
@@ -79,7 +75,7 @@ describe("playable coverage report", () => {
       for (const card of deck.cards) {
         expect(card.cardId).toMatch(/^\d+$/);
         expect(card.copies).toBeGreaterThan(0);
-        expect(["implemented", "vanilla"]).toContain(card.status);
+        expect(["goatVanilla", "goatTemplate", "goatCustom"]).toContain(card.status);
       }
     }
   });
@@ -92,11 +88,13 @@ function coverageCounts(): Record<CardCoverageStatus, number> {
       return counts;
     },
     {
-      implemented: 0,
-      vanilla: 0,
-      unsupported: 0,
-      blockedNoExtraDeck: 0,
-      blockedByScope: 0,
+      goatVanilla: 0,
+      goatTemplate: 0,
+      goatCustom: 0,
+      goatForbiddenButScripted: 0,
+      goatDeckBlocked: 0,
+      goatUnsupported: 0,
+      notInGoatPool: 0,
     },
   );
 }

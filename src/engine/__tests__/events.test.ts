@@ -43,6 +43,7 @@ describe("typed engine events", () => {
       "targets-chosen",
       "chain-link-created",
       "chain-resolved",
+      "effect-resolved-without-effect",
       "prompt-created",
       "prompt-resolved",
       "player-lost",
@@ -50,7 +51,7 @@ describe("typed engine events", () => {
       "illegal-action",
       "effect-not-implemented",
     ]);
-    expect(eventMessages(events)).toHaveLength(27);
+    expect(eventMessages(events)).toHaveLength(28);
     expect(events.every((event) => event.message.trim().length > 0)).toBe(true);
   });
 
@@ -294,8 +295,19 @@ function requiredEvents(): Record<CoreTypedEngineEventType, CoreTypedEngineEvent
       chainLinkId: "chain-1",
       sourceInstanceId: "inst-battle-ox",
     },
-    "prompt-created": {
+    "effect-resolved-without-effect": {
       id: "event-22",
+      type: "effect-resolved-without-effect",
+      message: "Chain link chain-1 resolved without effect: Stored target is no longer valid.",
+      playerId: "P1",
+      chainLinkId: "chain-1",
+      sourceInstanceId: "inst-spell",
+      cardId: "55144522",
+      effectId: "draw-two",
+      reason: "Stored target is no longer valid.",
+    },
+    "prompt-created": {
+      id: "event-23",
       type: "prompt-created",
       message: "P1 must choose a target.",
       playerId: "P1",
@@ -303,28 +315,28 @@ function requiredEvents(): Record<CoreTypedEngineEventType, CoreTypedEngineEvent
       promptKind: "target",
     },
     "prompt-resolved": {
-      id: "event-23",
+      id: "event-24",
       type: "prompt-resolved",
       message: "P1 chose a target.",
       playerId: "P1",
       promptId: "prompt-1",
     },
     "player-lost": {
-      id: "event-24",
+      id: "event-25",
       type: "player-lost",
       message: "P2 lost the duel.",
       playerId: "P2",
       reason: "lp-zero",
     },
     "duel-finished": {
-      id: "event-25",
+      id: "event-26",
       type: "duel-finished",
       message: "P1 won the duel.",
       winner: "P1",
       reason: "lp-zero",
     },
     "illegal-action": {
-      id: "event-26",
+      id: "event-27",
       type: "illegal-action",
       message: "P1 tried an illegal action.",
       playerId: "P1",
@@ -332,7 +344,7 @@ function requiredEvents(): Record<CoreTypedEngineEventType, CoreTypedEngineEvent
       reason: "Normal Summon already used.",
     },
     "effect-not-implemented": {
-      id: "event-27",
+      id: "event-28",
       type: "effect-not-implemented",
       message: "This card effect is not implemented.",
       playerId: "P1",
