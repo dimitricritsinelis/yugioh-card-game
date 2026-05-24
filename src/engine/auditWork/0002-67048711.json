@@ -1,0 +1,107 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "67048711",
+    "passcode": "67048711",
+    "slug": "7",
+    "name": "7",
+    "file_name": "67048711_7.webp",
+    "category": "Spell",
+    "classifications": [
+      "Continuous"
+    ],
+    "text": "When there are 3 face-up \"7\" cards on your side of the field, draw 3 cards from your Deck. Then destroy all \"7\" cards. When this card is sent directly from the field to your GY, increase your Life Points by 700 points.",
+    "monster": null,
+    "spell_trap": {
+      "icon": "Continuous"
+    },
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F67048711.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/_next/image?url=%2Fgoat-db%2F67048711.webp&w=640&q=75",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/67048711_7.webp",
+      "file_name": "67048711_7.webp",
+      "content_type": null,
+      "byte_size": 62861,
+      "width": 512,
+      "height": 747,
+      "sha256": "5f614e024bd9475c0fe8ef8e06dd34a30ac47090226afdf608b4d6a0d3af501a",
+      "status": "cached",
+      "error": null
+    },
+    "related_cards": [
+      "7 Completed",
+      "A Deal with Dark Ruler",
+      "A Feather of the Phoenix",
+      "A Legendary Ocean",
+      "A Wingbeat of Giant Dragon",
+      "Abyssal Designator",
+      "Acid Rain",
+      "After the Struggle"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/7",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/7.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 2,
+    "passcode": "67048711",
+    "name": "7",
+    "category": "Spell",
+    "classifications": [
+      "Continuous"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-53-03-584Z-d8b218d2-7161-445b-8817-85d0d0257143",
+    "localTextHash": "83111fac8a7c4b3ae0ea0bc379c632d1454e18921e2118cc516bd47ce93fca86",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:53:03.601Z",
+    "completedAt": null,
+    "attempts": 4,
+    "mechanicTags": [
+      "continuous",
+      "destroy",
+      "draw",
+      "spell"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/7",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-53-03-584Z-d8b218d2-7161-445b-8817-85d0d0257143. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0002-67048711-7.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "checkpoint": "src/engine/auditWork/checkpoints/0002-67048711.json",
+    "manifest": "parent runner merges checkpoint into src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}

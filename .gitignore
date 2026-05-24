@@ -25,5 +25,10 @@ pnpm-debug.log*
 .vscode/
 .idea/
 
+# Local scratch/duplicate folders that should never be committed.
+.claude/
+.git_corrupt_*/
+card_scraper/
+
 # Keep the runtime card bundle checked in for the Vite app.
 !public/yugioh_cards

@@ -715,11 +715,211 @@ button:focus-visible {
 .side-rail {
   display: grid;
   grid-area: detail;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   gap: 6px;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+}
+
+.engine-surface-stack {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.engine-panel {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(43, 49, 53, 0.92);
+  min-width: 0;
+}
+
+.engine-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.engine-panel-head .eyebrow {
+  margin: 0;
+}
+
+.engine-panel-head strong {
+  color: #f5f2ea;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.engine-panel-empty,
+.prompt-message {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.prompt-panel.active {
+  border-color: rgba(185, 150, 82, 0.48);
+}
+
+.prompt-actions {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 5px;
+  align-items: center;
+}
+
+.prompt-actions.two-col {
+  grid-template-columns: 1fr 1fr;
+}
+
+.prompt-actions.one-col {
+  grid-template-columns: 1fr;
+}
+
+.prompt-count {
+  min-width: 34px;
+  color: #f5f2ea;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.engine-panel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 6px 7px;
+  border: 1px solid rgba(185, 150, 82, 0.44);
+  border-radius: 6px;
+  background: rgba(185, 150, 82, 0.16);
+  color: #f7edd6;
+  font-size: 0.68rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.engine-panel-btn.subtle {
+  border-color: rgba(231, 223, 205, 0.22);
+  background: rgba(56, 63, 68, 0.72);
+  color: var(--text-soft);
+}
+
+.engine-panel-btn:hover:not(:disabled) {
+  border-color: var(--gold);
+  background: rgba(185, 150, 82, 0.86);
+  color: #1c160a;
+}
+
+.engine-panel-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.chain-list {
+  display: grid;
+  gap: 4px;
+  max-height: 82px;
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.chain-list li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.chain-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-selection-overlay {
+  position: absolute;
+  z-index: 6;
+  left: clamp(8px, 1vw, 14px);
+  right: calc(var(--right-rail-width) + clamp(8px, 1vw, 14px));
+  bottom: clamp(172px, 20vh, 270px);
+  display: grid;
+  gap: 7px;
+  max-height: min(34vh, 280px);
+  padding: 9px;
+  border: 1px solid rgba(185, 150, 82, 0.58);
+  border-radius: 8px;
+  background: rgba(17, 20, 24, 0.94);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.36);
+}
+
+.target-selection-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.target-selection-head .eyebrow {
+  margin: 0;
+}
+
+.target-selection-head strong {
+  color: #f5f2ea;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.target-selection-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 5px;
+  overflow: auto;
+}
+
+.target-selection-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 31px;
+  padding: 6px 7px;
+  border: 1px solid rgba(231, 223, 205, 0.18);
+  border-radius: 6px;
+  background: rgba(56, 63, 68, 0.72);
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.target-selection-option.selected {
+  border-color: rgba(185, 150, 82, 0.72);
+  background: rgba(185, 150, 82, 0.24);
+  color: #f7edd6;
+}
+
+.target-selection-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .right-rail {
@@ -1147,7 +1347,16 @@ button:focus-visible {
   .side-rail {
     order: 2;
     grid-template-columns: minmax(260px, 1fr) minmax(260px, 0.8fr);
-    grid-template-rows: auto;
+    grid-template-rows: auto auto;
+  }
+
+  .engine-surface-stack {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .target-selection-overlay {
+    right: 14px;
+    bottom: 154px;
   }
 
   .rail-footer {
@@ -1203,6 +1412,16 @@ button:focus-visible {
 
   .side-rail {
     grid-template-columns: 1fr;
+  }
+
+  .engine-surface-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .target-selection-overlay {
+    left: 8px;
+    right: 8px;
+    bottom: 126px;
   }
 
   .action-panel {

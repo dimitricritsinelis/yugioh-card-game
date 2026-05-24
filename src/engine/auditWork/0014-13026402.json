@@ -1,0 +1,111 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "13026402",
+    "passcode": "13026402",
+    "slug": "a-team-trap-disposal-unit",
+    "name": "A-Team: Trap Disposal Unit",
+    "file_name": "13026402_a-team-trap-disposal-unit.webp",
+    "category": "Monster",
+    "classifications": [
+      "Effect"
+    ],
+    "text": "This effect can be used during either player's turn. When your opponent activates a Trap Card, Tribute this face-up card to negate the activation of the Trap Card and destroy it.",
+    "monster": {
+      "attribute": "FIRE",
+      "type": "Machine",
+      "level": 2,
+      "atk": 300,
+      "def": 400
+    },
+    "spell_trap": null,
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F13026402.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/_next/image?url=%2Fgoat-db%2F13026402.webp&w=640&q=75",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/13026402_a-team-trap-disposal-unit.webp",
+      "file_name": "13026402_a-team-trap-disposal-unit.webp",
+      "content_type": "image/jpeg",
+      "byte_size": 58681,
+      "width": 512,
+      "height": 747,
+      "sha256": "9cb903def9bb5a32736647d117ee359b7e4200bcde8224dd99c8ed6f89d0ec67",
+      "status": "downloaded",
+      "error": null
+    },
+    "related_cards": [
+      "Battle Footballer",
+      "Blast Juggler",
+      "Gadget Soldier",
+      "Giga-Tech Wolf",
+      "Launcher Spider",
+      "Robotic Knight",
+      "UFO Turtle",
+      "Woodborg Inpachi"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/a-team-trap-disposal-unit",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/a-team-trap-disposal-unit.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 14,
+    "passcode": "13026402",
+    "name": "A-Team: Trap Disposal Unit",
+    "category": "Monster",
+    "classifications": [
+      "Effect"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba",
+    "localTextHash": "50e5edb8b14b0081075358abe11f5d6d10c15f40b153a77bf3feeb9176117c13",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:40:37.986Z",
+    "completedAt": null,
+    "attempts": 2,
+    "mechanicTags": [
+      "destroy",
+      "effect",
+      "monster",
+      "negate",
+      "tribute"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/a-team-trap-disposal-unit",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0014-13026402-a-team-trap-disposal-unit.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "manifest": "src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}

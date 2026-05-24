@@ -17,19 +17,26 @@ import {
   assignRandomTestDecksToDuel,
   applyAction,
   buildGoatTestDeck,
-  createDuel,
+  createDuel as createEngineDuel,
   getLegalActions,
+  isPlayableCard,
   GOAT_TEST_DECKS,
+  KAIBA_PLAYABLE_DECK_FIXTURE,
   KAIBA_GOAT_TEST_DECK,
   runPassiveBoardFillerOpponentTurn,
   serializeDuel,
   validateGoatTestDeckDefinitions,
   validateDeck,
+  YUGI_PLAYABLE_DECK_FIXTURE,
   YUGI_GOAT_TEST_DECK,
 } from "../index";
 import type { DeckList, DuelCardInstance, DuelState, DuelZoneCard, PlayerId } from "../types";
 
 const cards = cardsJson as CardRecord[];
+
+function createDuel(config: Parameters<typeof createEngineDuel>[0]): ReturnType<typeof createEngineDuel> {
+  return createEngineDuel({ allowUnsupportedCards: true, ...config });
+}
 
 describe("deck validation", () => {
   it("rejects copy-limit and forbidden-card violations", () => {
@@ -41,12 +48,12 @@ describe("deck validation", () => {
     expect(result.errors.join(" ")).toContain("Change of Heart exceeds Forbidden copy limit");
   });
 
-  it("enforces Fusion Monsters in the Extra Deck only", () => {
+  it("rejects Fusion Monsters and Extra Deck inputs in playable decks", () => {
     const fusion = cardByName("Thousand-Eyes Restrict").passcode;
     const nonFusion = cardByName("Battle Ox").passcode;
 
     expect(validateDeck(deckWith(["Thousand-Eyes Restrict"]), cards).errors.join(" ")).toContain(
-      "must be in the Extra Deck",
+      "Extra/Fusion Decks are outside playable scope",
     );
 
     expect(
@@ -57,7 +64,7 @@ describe("deck validation", () => {
         },
         cards,
       ).errors.join(" "),
-    ).toContain("is not a Fusion Monster");
+    ).toContain("Extra Deck is not supported");
 
     expect(
       validateDeck(
@@ -66,8 +73,8 @@ describe("deck validation", () => {
           extra: [fusion],
         },
         cards,
-      ).valid,
-    ).toBe(true);
+      ).errors.join(" "),
+    ).toContain("Extra Deck is not supported");
   });
 });
 
@@ -88,21 +95,20 @@ describe("GOAT test deck presets", () => {
     }
   });
 
-  it("resolves preset decks to valid local DeckLists and keeps Extra Deck cards Fusion-only", () => {
+  it("resolves preset decks to valid local Main Deck-only DeckLists", () => {
     const yugi = buildGoatTestDeck(YUGI_GOAT_TEST_DECK, cards, "yugi-test");
     const kaiba = buildGoatTestDeck(KAIBA_GOAT_TEST_DECK, cards, "kaiba-test");
-    const cardByPasscode = new Map(cards.map((card) => [card.passcode, card]));
 
     expect(yugi.deck.main).toHaveLength(40);
     expect(kaiba.deck.main).toHaveLength(40);
+    expect(yugi.deck.side).toBeUndefined();
+    expect(yugi.deck.extra).toBeUndefined();
+    expect(kaiba.deck.side).toBeUndefined();
+    expect(kaiba.deck.extra).toBeUndefined();
     expect(validateDeck(yugi.deck, cards).valid).toBe(true);
     expect(validateDeck(kaiba.deck, cards).valid).toBe(true);
-    expect([...(yugi.deck.extra ?? []), ...(kaiba.deck.extra ?? [])].every((passcode) =>
-      cardByPasscode.get(passcode)?.classifications.includes("Fusion"),
-    )).toBe(true);
-    expect(yugi.warnings).toEqual([]);
+    expect(yugi.warnings.join(" ")).toContain("using supported vanilla filler");
     expect(kaiba.warnings.join(" ")).toContain("Vorse Raider");
-    expect(kaiba.warnings.join(" ")).toContain("Blue-Eyes Ultimate Dragon");
     expect(validateGoatTestDeckDefinitions(cards).every((warning) => !warning.includes("exceeds"))).toBe(true);
   });
 
@@ -153,6 +159,21 @@ describe("duel core rules", () => {
     );
   });
 
+  it("keeps the legacy createDuel API as a facade over core reducer state", () => {
+    const state = createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) }, firstPlayer: "P1" });
+    const result = applyAction(state, { type: "draw", playerId: "P1" });
+
+    expect(state.coreState).toBeDefined();
+    expect(state.players.P1.sideDeck).toHaveLength(0);
+    expect(state.players.P1.extraDeck).toHaveLength(0);
+    expect(state.coreState?.players.P1.hand.map((instance) => instance.instanceId)).toEqual(
+      state.players.P1.hand.map((instance) => instance.instanceId),
+    );
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({ id: "evt-0013", type: "card-drawn" });
+    expect(result.state.coreState?.players.P1.hand).toHaveLength(6);
+  });
+
   it("auto-advances Draw and Standby into Main Phase 1 with Goat first-turn draw behavior", () => {
     const state = createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) } });
     const result = advanceToNextDecision(state, "P1");
@@ -176,7 +197,7 @@ describe("duel core rules", () => {
 
     expect(result.state.phase).toBe("DP");
     expect(result.state.winner).toBe("P2");
-    expect(result.events.map((event) => event.type)).toEqual(["deck-out"]);
+    expect(result.events.map((event) => event.type)).toEqual(["player-lost", "duel-finished"]);
   });
 
   it("auto-passes Standby Phase when no prompts exist", () => {
@@ -228,6 +249,35 @@ describe("duel core rules", () => {
     });
   });
 
+  it("does not offer or allow basic Normal Summon actions for Ritual Monsters", () => {
+    let state = createDuel({
+      cards,
+      decks: { P1: deckWith(["Paladin of White Dragon"]), P2: deckWith([]) },
+      firstPlayer: "P1",
+    });
+    state = applyAction(state, { type: "set-phase", playerId: "P1", phase: "M1" }).state;
+
+    const ritual = state.players.P1.hand.find((instance) => instance.card.name === "Paladin of White Dragon")!;
+    const legalActions = getLegalActions(state, "P1").filter(
+      (action) => action.type === "play-card" && action.instanceId === ritual.instanceId,
+    );
+
+    expect(legalActions).toEqual([]);
+
+    const result = applyAction(state, {
+      type: "play-card",
+      playerId: "P1",
+      instanceId: ritual.instanceId,
+      intent: "summon",
+      zoneKind: "monster",
+      zoneIndex: 0,
+    });
+
+    expect(result.events.at(-1)?.type).toBe("illegal-action");
+    expect(result.state.players.P1.hand.some((instance) => instance.instanceId === ritual.instanceId)).toBe(true);
+    expect(result.state.players.P1.monsterZones[0]).toBeNull();
+  });
+
   it("summons, sets, and activates cards without resolving card text effects", () => {
     let state = createDuel({
       cards,
@@ -271,6 +321,7 @@ describe("duel core rules", () => {
     expect(state.players.P1.hand).toHaveLength(2);
     expect(state.players.P1.deck).toHaveLength(35);
     expect(state.players.P1.spellTrapZones[1]?.instance.card.name).toBe("Messenger of Peace");
+    expect(state.events.map((event) => event.type)).toContain("effect-not-implemented");
   });
 
   it("requires exact Tributes for Level 7+ Tribute Summons and prefers empty target zones", () => {
@@ -605,6 +656,7 @@ describe("PassiveBoardFillerOpponent", () => {
         P1: deckWith([]),
         P2: deckWith(["Battle Ox", "Mystic Tomato", "Sangan"]),
       },
+      allowUnsupportedCards: true,
       opponentBehavior: "none",
       seed: "normal-opponent",
       suppressWarnings: true,
@@ -649,6 +701,7 @@ describe("PassiveBoardFillerOpponent", () => {
         P1: deckWith([]),
         P2: deckWith(["Battle Ox", "Mystic Tomato", "Sangan"]),
       },
+      allowUnsupportedCards: true,
       opponentBehavior: "passive-board-filler",
       seed: "passive-flow",
       suppressWarnings: true,
@@ -683,14 +736,12 @@ describe("frontend adapter", () => {
     expect(adjusted.opponent.lp).toBe(7200);
   });
 
-  it("starts default games with independently assigned preset decks", () => {
+  it("starts default games with independently assigned playable fixture decks", () => {
     const game = createInitialGameState(cards, {
       rng: sequenceRng([0.1, 0.9, 0.2, 0.3]),
       seed: "default-presets",
       suppressWarnings: true,
     });
-    const yugi = buildGoatTestDeck(YUGI_GOAT_TEST_DECK, cards);
-    const kaiba = buildGoatTestDeck(KAIBA_GOAT_TEST_DECK, cards);
     const playerMain = [
       ...game.engine!.players.P1.hand,
       ...game.engine!.players.P1.deck,
@@ -702,8 +753,8 @@ describe("frontend adapter", () => {
 
     expect(playerMain).toHaveLength(40);
     expect(opponentMain).toHaveLength(40);
-    expect(sorted(playerMain)).toEqual(sorted(yugi.deck.main));
-    expect(sorted(opponentMain)).toEqual(sorted(kaiba.deck.main));
+    expect(sorted(playerMain)).toEqual(sorted(YUGI_PLAYABLE_DECK_FIXTURE.deck.main));
+    expect(sorted(opponentMain)).toEqual(sorted(KAIBA_PLAYABLE_DECK_FIXTURE.deck.main));
   });
 
   it("only exposes legal board placement actions and marks unplayable hand cards", () => {
@@ -712,6 +763,7 @@ describe("frontend adapter", () => {
         P1: deckWith(["Battle Ox", "Battle Ox", "Pot of Greed"]),
         P2: deckWith([]),
       },
+      allowUnsupportedCards: true,
       seed: "legal-placements",
       suppressWarnings: true,
     });
@@ -748,6 +800,7 @@ describe("frontend adapter", () => {
         P1: deckWith(["Buster Blader"]),
         P2: deckWith([]),
       },
+      allowUnsupportedCards: true,
       seed: "tribute-adapter",
       suppressWarnings: true,
     });
@@ -865,7 +918,7 @@ function deckWith(priorityNames: string[]): DeckList {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        !card.classifications.includes("Fusion") &&
+        isPlayableCard(card.passcode, cards) &&
         !excluded.has(card.passcode),
     )
     .slice(0, 40 - priorityPasscodes.length)
@@ -873,8 +926,6 @@ function deckWith(priorityNames: string[]): DeckList {
 
   return {
     main: [...priorityPasscodes, ...filler],
-    side: [],
-    extra: [],
   };
 }
 
@@ -897,8 +948,6 @@ function deckWithNoMonsters(): DeckList {
 
   return {
     main: nonMonsterCopies.slice(0, 40),
-    side: [],
-    extra: [],
   };
 }
 
@@ -962,6 +1011,6 @@ function sequenceRng(values: number[]) {
   };
 }
 
-function sorted(values: string[]): string[] {
+function sorted(values: readonly string[]): string[] {
   return [...values].sort();
 }

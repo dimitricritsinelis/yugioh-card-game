@@ -1,0 +1,106 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "06850209",
+    "passcode": "06850209",
+    "slug": "a-deal-with-dark-ruler",
+    "name": "A Deal with Dark Ruler",
+    "file_name": "06850209_a-deal-with-dark-ruler.webp",
+    "category": "Spell",
+    "classifications": [
+      "Quick-Play"
+    ],
+    "text": "(This card is always treated as an \"Archfiend\" card.) If a Level 8 or higher monster under your control was sent to the GY this turn; Special Summon 1 \"Berserk Dragon\" from your hand or Deck.",
+    "monster": null,
+    "spell_trap": {
+      "icon": "Quick-Play"
+    },
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F06850209.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/goat-db/6850209.webp",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/06850209_a-deal-with-dark-ruler.webp",
+      "file_name": "06850209_a-deal-with-dark-ruler.webp",
+      "content_type": "image/webp",
+      "byte_size": 44134,
+      "width": 512,
+      "height": 747,
+      "sha256": "c158c20dd23287da2889336e1dbe9cd0b2691c4e9ecd0d0e10092ce86de6e5a7",
+      "status": "downloaded",
+      "error": null
+    },
+    "related_cards": [
+      "7",
+      "7 Completed",
+      "A Feather of the Phoenix",
+      "A Legendary Ocean",
+      "A Wingbeat of Giant Dragon",
+      "Abyssal Designator",
+      "Acid Rain",
+      "After the Struggle"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/a-deal-with-dark-ruler",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/a-deal-with-dark-ruler.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 7,
+    "passcode": "06850209",
+    "name": "A Deal with Dark Ruler",
+    "category": "Spell",
+    "classifications": [
+      "Quick-Play"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-53-03-584Z-d8b218d2-7161-445b-8817-85d0d0257143",
+    "localTextHash": "a7913fcdbe7580bcc6865418d4feb698877004a2ca1fa59306f60185449e0355",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:53:03.603Z",
+    "completedAt": null,
+    "attempts": 3,
+    "mechanicTags": [
+      "quick-play",
+      "special-summon",
+      "spell"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/a-deal-with-dark-ruler",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-53-03-584Z-d8b218d2-7161-445b-8817-85d0d0257143. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0007-06850209-a-deal-with-dark-ruler.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "checkpoint": "src/engine/auditWork/checkpoints/0007-06850209.json",
+    "manifest": "parent runner merges checkpoint into src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}

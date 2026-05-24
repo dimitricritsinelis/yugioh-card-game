@@ -1,0 +1,105 @@
+{
+  "auditVersion": 1,
+  "mode": "fast-defer-tests",
+  "card": {
+    "id": "21323861",
+    "passcode": "21323861",
+    "slug": "acid-rain",
+    "name": "Acid Rain",
+    "file_name": "21323861_acid-rain.webp",
+    "category": "Spell",
+    "classifications": [
+      "Normal"
+    ],
+    "text": "Destroy all face-up Machine-Type monsters on the field.",
+    "monster": null,
+    "spell_trap": {
+      "icon": "Normal"
+    },
+    "legality": {
+      "goat_world_pool": true,
+      "restriction": "Unlimited",
+      "max_copies": 3
+    },
+    "image": {
+      "source_src": "/_next/image?url=%2Fgoat-db%2F21323861.webp&w=640&q=75",
+      "resolved_url": "https://goatworld.community/_next/image?url=%2Fgoat-db%2F21323861.webp&w=640&q=75",
+      "file_path": "/Users/dimitri2/Desktop/yugioh/yugioh_cards/images/21323861_acid-rain.webp",
+      "file_name": "21323861_acid-rain.webp",
+      "content_type": "image/jpeg",
+      "byte_size": 42627,
+      "width": 512,
+      "height": 747,
+      "sha256": "adf776d94ecdc3fe9f63f9fbc9247b8a359c03fe79f32c7f44f57f8a23c24be9",
+      "status": "downloaded",
+      "error": null
+    },
+    "related_cards": [
+      "7",
+      "7 Completed",
+      "A Deal with Dark Ruler",
+      "A Feather of the Phoenix",
+      "A Legendary Ocean",
+      "A Wingbeat of Giant Dragon",
+      "Abyssal Designator",
+      "After the Struggle"
+    ],
+    "source": {
+      "site": "goatworld.community",
+      "card_pool_url": "https://goatworld.community/wiki/card-pool",
+      "detail_url": "https://goatworld.community/cards/acid-rain",
+      "scraped_at": "2026-05-20T03:10:43.222Z",
+      "raw_html_cache_path": "/Users/dimitri2/Desktop/yugioh/card_scraper/artifacts/latest/.cache/html/acid-rain.html"
+    },
+    "game": {
+      "rarity": null,
+      "directional_values": null,
+      "generated_ability": null
+    }
+  },
+  "progressEntry": {
+    "order": 20,
+    "passcode": "21323861",
+    "name": "Acid Rain",
+    "category": "Spell",
+    "classifications": [
+      "Normal"
+    ],
+    "status": "in-progress",
+    "auditVersion": 1,
+    "previousStatus": "unreviewed",
+    "reviewedAt": null,
+    "reviewPromptId": "audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba",
+    "localTextHash": "b9336b4a74faf25f059aea7c35164ae78f4ea2b92bcd63582f434aafc8e6f714",
+    "implementationSummary": null,
+    "acceptanceTests": [],
+    "rulingNotes": [],
+    "claimedAt": "2026-05-21T20:40:37.990Z",
+    "completedAt": null,
+    "attempts": 2,
+    "mechanicTags": [
+      "destroy",
+      "normal",
+      "spell"
+    ],
+    "rulingSources": [
+      "https://goatworld.community/cards/acid-rain",
+      "https://www.goatformat.com/indivrulings.html"
+    ],
+    "implementationFile": null,
+    "testFile": null,
+    "notes": "Audit v1 claimed by audit-2026-05-21T20-40-37-964Z-dc5a84ec-6a61-4d56-a749-d9af4e44ccba. Previous status: queued."
+  },
+  "requiredOutputs": {
+    "reviewSpec": "src/engine/cardReviews/0020-21323861-acid-rain.md",
+    "implementationFile": "src/engine/cardScripts.ts or a grouped card script module exported by it",
+    "tests": "deferred until final sweep",
+    "manifest": "src/engine/effectProgress.json"
+  },
+  "verificationCommands": [
+    "deferred: npm run typecheck",
+    "deferred: npm run test",
+    "deferred: npm run build",
+    "deferred: npm run effect-progress:ci"
+  ]
+}
