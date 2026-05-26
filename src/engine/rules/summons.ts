@@ -120,8 +120,14 @@ function validateTributes(
   }
 
   for (const tributeId of uniqueTributes) {
-    if (!player.monsterZones.some((zone) => zone?.instanceId === tributeId)) {
+    const tribute = player.monsterZones.find((zone) => zone?.instanceId === tributeId);
+
+    if (!tribute) {
       return "Tributes must be monsters you control.";
+    }
+
+    if (tribute.token?.cannotBeTributedForTributeSummon) {
+      return "That Token cannot be Tributed for a Tribute Summon.";
     }
   }
 

@@ -4,10 +4,13 @@ import type { CardRecord } from "../../types";
 import type { CardScript } from "../cards/CardScript";
 import { isPlayableCard } from "../cards/coverage";
 import { createCardScriptRegistry } from "../cards/registry";
+import { createContinuousSpellScript } from "../cards/templates/continuousSpell";
+import { createFieldSpellScript } from "../cards/templates/fieldSpell";
 import { createNormalSpellScript } from "../cards/templates/normalSpell";
 import { createQuickPlaySpellScript } from "../cards/templates/quickPlaySpell";
 import type { ZoneCard, ZoneRef } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
+import { deriveBattleStats } from "../effects/continuous";
 import type { TargetSpec } from "../effects/targets";
 import { createDuel, reduceDuel } from "../reducer";
 
@@ -259,6 +262,81 @@ describe("Spell templates", () => {
     expect(resolved.state.players.P1.lp).toBe(8500);
     expect(resolved.state.players.P2.lp).toBe(7200);
     expect(resolved.events.filter((event) => event.type === "lp-changed")).toHaveLength(2);
+  });
+
+  it("creates Continuous Spell template scripts with an ignition activation that places the source and a continuous effect", () => {
+    const script = createContinuousSpellScript({
+      cardId: BATTLE_OX_ID,
+      continuous: {
+        statModifiers: [
+          {
+            stat: "atk",
+            amount: 500,
+            target: { controller: "own", face: "faceUp" },
+          },
+        ],
+      },
+    });
+
+    expect(script).toMatchObject({
+      cardId: BATTLE_OX_ID,
+      effects: [
+        {
+          id: "activate",
+          kind: "ignition",
+          implemented: true,
+          spellSpeed: 1,
+          resolution: {
+            sendSourceToGraveyard: false,
+          },
+        },
+        {
+          id: "continuous",
+          kind: "continuous",
+          implemented: true,
+        },
+      ],
+    });
+  });
+
+  it("creates Field Spell template scripts that place the source in the Field Zone", () => {
+    const script = createFieldSpellScript({
+      cardId: BATTLE_OX_ID,
+      continuous: {
+        statModifiers: [
+          {
+            stat: "atk",
+            amount: 300,
+            target: { cardIds: [AQUA_MADOOR_ID], face: "faceUp" },
+          },
+        ],
+      },
+    });
+    const state = withFieldCards(stateWithScripts([script]), {
+      P1: {
+        monsterZones: [zoneCard("p1-aqua", AQUA_MADOOR_ID, "P1"), null, null, null, null],
+      },
+      P2: {
+        fieldZone: zoneCard("p2-field", POT_OF_GREED_ID, "P2", { position: null }),
+      },
+    });
+    const resolved = activateAndResolve(state, BATTLE_OX_ID);
+    const target = resolved.state.players.P1.monsterZones[0]!;
+
+    expect(resolved.errors).toEqual([]);
+    expect(resolved.state.players.P1.fieldZone).toMatchObject({ cardId: BATTLE_OX_ID, face: "faceUp", position: null });
+    expect(resolved.state.players.P2.fieldZone).toBeNull();
+    expect(resolved.state.players.P2.graveyard.some((card) => card.instanceId === "p2-field")).toBe(true);
+    expect(deriveBattleStats(resolved.state, { playerId: "P1", card: target, base: { atk: 1200, def: 2000 } })).toEqual({
+      atk: 1500,
+      def: 2000,
+    });
+    expect(script.effects[0]).toMatchObject({
+      resolution: {
+        steps: [{ kind: "place-source-in-field-zone" }],
+        sendSourceToGraveyard: false,
+      },
+    });
   });
 });
 

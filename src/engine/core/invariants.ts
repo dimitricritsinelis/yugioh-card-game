@@ -72,6 +72,10 @@ function collectPlayerCardLocations(playerId: PlayerId, player: PlayerState): Lo
     locations.push({ instanceId: card.instanceId, cardId: card.cardId, ref: { playerId, zone: "mainDeck", index } });
   });
 
+  (player.fusionDeck ?? []).forEach((card, index) => {
+    locations.push({ instanceId: card.instanceId, cardId: card.cardId, ref: { playerId, zone: "fusionDeck", index } });
+  });
+
   player.hand.forEach((card, index) => {
     locations.push({ instanceId: card.instanceId, cardId: card.cardId, ref: { playerId, zone: "hand", index } });
   });

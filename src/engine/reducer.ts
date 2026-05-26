@@ -1,8 +1,8 @@
 import type { CardRecord } from "../types";
-import type { EffectDefinition, EffectResolutionStep } from "./cards/CardScript";
+import type { DeckMonsterFilter, EffectDefinition, EffectResolutionStep } from "./cards/CardScript";
 import { getCardScriptForDefinitions, EFFECT_NOT_IMPLEMENTED } from "./cards/unsupported";
 import type { EngineCommand } from "./commands";
-import type { AttachmentLeaveBehavior, CardInstance, ZoneCard, ZoneRef } from "./core/cardRefs";
+import type { AttachmentLeaveBehavior, CardInstance, TokenData, ZoneCard, ZoneRef } from "./core/cardRefs";
 import { cloneDuelState } from "./core/clone";
 import type { DuelState, PendingAttackState, PlayerState } from "./core/state";
 import { findCardByInstanceId, insertIntoZone, removeFromZone, setCardFace, updateMonsterPosition } from "./core/zones";
@@ -15,6 +15,7 @@ import {
   hasPiercingDamage,
   validateContinuousActivationRestrictions,
   validateContinuousAttackRestrictions,
+  validateDirectAttackRestrictions,
 } from "./effects/continuous";
 import { payCosts, type PaidCost } from "./effects/costs";
 import { addLingeringEffect } from "./effects/lingering";
@@ -40,6 +41,7 @@ import type {
   EngineEvent,
   IllegalActionEvent,
   LpChangedEvent,
+  MonsterFlippedFaceUpEvent,
   MonsterSetEvent,
   PhaseChangedEvent,
   PlayerLostEvent,
@@ -55,7 +57,7 @@ import type {
 import { createPrompt, type PromptDefinition } from "./prompts/prompt";
 import { validatePromptAnswer } from "./prompts/selection";
 import type { EnginePrompt, EngineResult } from "./result";
-import { createRngState, shuffleWithRng, type RngState } from "./random";
+import { createRngState, nextRandom, shuffleWithRng, type RngState } from "./random";
 import { addChainLink, createChainLink, resolveChainLifo, type ChainLink } from "./rules/chain";
 import {
   createDamageCalculationStep,
@@ -129,6 +131,20 @@ interface EventBuilder {
   readonly nextId: () => string;
 }
 
+interface RitualSummonCard {
+  readonly ref: ZoneRef;
+  readonly card: CardInstance | ZoneCard;
+  readonly definition: CardDefinition;
+}
+
+interface RitualSummonSelection {
+  readonly ritualMonster: RitualSummonCard;
+  readonly tributes: readonly RitualSummonCard[];
+  readonly requiredLevel: number;
+  readonly levelRequirement: "at-least" | "exact";
+  readonly totalTributeLevel: number;
+}
+
 export function createDuel(config: CreateCoreDuelConfig): CreateDuelResult {
   const seed = config.seed ?? DEFAULT_SEED;
   const firstPlayer = config.firstPlayer ?? "P1";
@@ -178,6 +194,9 @@ export function createDuel(config: CreateCoreDuelConfig): CreateDuelResult {
     players,
     chain: [],
     lingeringEffects: [],
+    controlChangeReturns: [],
+    effectUsage: {},
+    negatedChainLinkIds: [],
     prompts: {},
     pendingPromptIds: [],
     eventIds: events.map((event) => event.id),
@@ -235,6 +254,12 @@ function changePhase(state: DuelState, command: Extract<EngineCommand, { type: "
     return preflight;
   }
 
+  const pendingProcedure = validateNoPendingPhaseProcedure(state);
+
+  if (pendingProcedure) {
+    return illegalResult(state, command, pendingProcedure, command.playerId);
+  }
+
   if (!isNextPhase(state.phase, command.phase)) {
     return illegalResult(
       state,
@@ -280,9 +305,15 @@ function changePhase(state: DuelState, command: Extract<EngineCommand, { type: "
     ),
     [phaseChanged],
   );
-  const triggers = collectTriggers(nextState, [phaseChanged], "after-action", eventBuilder);
+  const controlReturns = command.phase === "EP"
+    ? applyScheduledControlReturns(nextState, eventBuilder)
+    : { state: nextState, events: [] as EngineEvent[] };
 
-  return result(command, triggers.state, [...events, phaseChanged, ...triggers.events], triggers.prompts);
+  nextState = appendEventIds(controlReturns.state, controlReturns.events);
+  const sourceEvents = [phaseChanged, ...controlReturns.events];
+  const triggers = collectTriggers(nextState, sourceEvents, "after-action", eventBuilder);
+
+  return result(command, triggers.state, [...events, phaseChanged, ...controlReturns.events, ...triggers.events], triggers.prompts);
 }
 
 function endTurn(state: DuelState, command: Extract<EngineCommand, { type: "end-turn" }>): EngineResult {
@@ -290,6 +321,12 @@ function endTurn(state: DuelState, command: Extract<EngineCommand, { type: "end-
 
   if (preflight) {
     return preflight;
+  }
+
+  const pendingProcedure = validateNoPendingPhaseProcedure(state);
+
+  if (pendingProcedure) {
+    return illegalResult(state, command, pendingProcedure, command.playerId);
   }
 
   if (state.phase !== "EP") {
@@ -300,7 +337,7 @@ function endTurn(state: DuelState, command: Extract<EngineCommand, { type: "end-
   const eventBuilder = createEventBuilder(cleanedState.eventIds.length);
   const discardResult = discardHandToLimit(cleanedState.players[command.playerId]);
   const discardEvents = discardResult.discards.map((discard) =>
-    createHandSizeDiscardEvent(eventBuilder, command.playerId, discard, state.turn),
+    createHandSizeDiscardEvent(eventBuilder, command.playerId, discard, state.turn, state.phase),
   );
   const nextPlayer = state.turnMode === "solo" ? command.playerId : opponentOf(command.playerId);
   const nextTurn = state.turn + 1;
@@ -389,10 +426,12 @@ function playMonsterFromHand(
       createCardMovedEvent(
         eventBuilder,
         command.playerId,
-        tribute,
+        toPublicZoneCard(tribute),
         { playerId: command.playerId, zone: "monsterZone", index: tributeIndex },
         { playerId: command.playerId, zone: "graveyard", index: 0 },
         state.turn,
+        state.phase,
+        state.chain.length,
         "tribute",
       ),
     );
@@ -642,19 +681,32 @@ function attack(state: DuelState, command: Extract<EngineCommand, { type: "attac
     return illegalResult(state, command, "Selected attacker is not controlled by that player.", command.playerId);
   }
 
-  const attackRestriction = validateContinuousAttackRestrictions(state, attackerPlayerId, attacker);
+  const attackRestriction = validateContinuousAttackRestrictions(
+    state,
+    attackerPlayerId,
+    attacker,
+    defender ? { playerId: defenderPlayerId, card: defender } : null,
+  );
 
   if (attackRestriction) {
     return illegalResult(state, command, attackRestriction, command.playerId);
   }
 
-  const attackerBaseStats = getMonsterBattleStats(state.cardDefinitions?.[attacker.cardId]);
+  if (!command.defenderInstanceId) {
+    const directAttackRestriction = validateDirectAttackRestrictions(state, attackerPlayerId, attacker);
+
+    if (directAttackRestriction) {
+      return illegalResult(state, command, directAttackRestriction, command.playerId);
+    }
+  }
+
+  const attackerBaseStats = getBattleStatsForZoneCard(state, attacker);
 
   if (!attackerBaseStats) {
     return illegalResult(state, command, "Attacking monster is missing numeric battle stats.", command.playerId);
   }
 
-  if (defender && !getMonsterBattleStats(state.cardDefinitions?.[defender.cardId])) {
+  if (defender && !getBattleStatsForZoneCard(state, defender)) {
     return illegalResult(state, command, "Defending monster is missing numeric battle stats.", command.playerId);
   }
 
@@ -689,7 +741,7 @@ function attack(state: DuelState, command: Extract<EngineCommand, { type: "attac
 }
 
 function activateCard(state: DuelState, command: Extract<EngineCommand, { type: "activate-card" }>): EngineResult {
-  const preflight = validateTurnCommand(state, command);
+  const preflight = validatePlayerCommand(state, command);
 
   if (preflight) {
     return preflight;
@@ -743,6 +795,30 @@ function activateCard(state: DuelState, command: Extract<EngineCommand, { type: 
     return illegalResult(state, command, "Trigger effects can only be activated by their trigger timing.", command.playerId);
   }
 
+  const activationWindowError = validateActivationWindow(state, effect, command.playerId);
+
+  if (activationWindowError) {
+    return illegalResult(state, command, activationWindowError, command.playerId);
+  }
+
+  const ignitionError = validateIgnitionActivation(state, effect, command.playerId);
+
+  if (ignitionError) {
+    return illegalResult(state, command, ignitionError, command.playerId);
+  }
+
+  const oncePerTurnError = validateOncePerTurnUsage(
+    state,
+    command.playerId,
+    located.card.cardId,
+    located.card.instanceId,
+    effect,
+  );
+
+  if (oncePerTurnError) {
+    return illegalResult(state, command, oncePerTurnError, command.playerId);
+  }
+
   const damageStepError = validateDamageStepActivation(state, effect);
 
   if (damageStepError) {
@@ -771,6 +847,18 @@ function activateCard(state: DuelState, command: Extract<EngineCommand, { type: 
 
   if (!targetResult.valid) {
     return illegalResult(state, command, targetResult.reason ?? "Invalid effect targets.", command.playerId);
+  }
+
+  const procedureError = validateProcedureSelection(
+    state,
+    command.playerId,
+    located.card.instanceId,
+    effect,
+    targetResult.selectedTargets,
+  );
+
+  if (procedureError) {
+    return illegalResult(state, command, procedureError, command.playerId);
   }
 
   const costResult = payCosts(state, command.playerId, effect.costs ?? [], {
@@ -813,7 +901,14 @@ function activateCard(state: DuelState, command: Extract<EngineCommand, { type: 
     createEffectActivatedEvent(eventBuilder, chainLink, state.turn),
     createChainLinkCreatedEvent(eventBuilder, chainLink, state.turn),
   ];
-  const stateWithSourceRevealed = revealActivationSource(costResult.state, located.ref);
+  const stateWithUsage = markOncePerTurnUsage(
+    costResult.state,
+    command.playerId,
+    located.card.cardId,
+    located.card.instanceId,
+    effect,
+  );
+  const stateWithSourceRevealed = revealActivationSource(stateWithUsage, located.ref);
   const nextState: DuelState = appendEventIds(
     {
       ...cloneDuelState(stateWithSourceRevealed),
@@ -864,6 +959,10 @@ function answerPrompt(state: DuelState, command: Extract<EngineCommand, { type: 
 
   if (!prompt || !state.pendingPromptIds.includes(command.promptId)) {
     return illegalResult(state, command, "Prompt is not pending.", command.playerId);
+  }
+
+  if (state.pendingPromptIds[0] !== command.promptId) {
+    return illegalResult(state, command, "Pending prompts must be answered in order.", command.playerId);
   }
 
   if (prompt.playerId !== command.playerId) {
@@ -927,6 +1026,10 @@ function resolveChain(state: DuelState, command: Extract<EngineCommand, { type: 
     return preflight;
   }
 
+  if (state.pendingPromptIds.length > 0) {
+    return illegalResult(state, command, "Pending prompts must be answered before resolving the chain.", command.playerId);
+  }
+
   if (state.chain.length === 0) {
     return illegalResult(state, command, "No chain is currently active.", command.playerId);
   }
@@ -961,7 +1064,7 @@ function resolveChain(state: DuelState, command: Extract<EngineCommand, { type: 
   const pendingAttack = resolvePendingAttack(applyStateBasedCleanup(applied.state), eventBuilder);
   const terminal = applyAutomaticWinConditionsUnrecorded(applyStateBasedCleanup(pendingAttack.state), eventBuilder);
   const events = [...chainEvents, ...applied.events, ...pendingAttack.events, ...terminal.events];
-  const nextState = appendEventIds(terminal.state, events);
+  const nextState = appendEventIds({ ...terminal.state, negatedChainLinkIds: [] }, events);
   const triggers = collectTriggers(nextState, events, "chain-resolved", eventBuilder);
 
   return result(command, triggers.state, [...events, ...triggers.events], triggers.prompts);
@@ -1026,7 +1129,7 @@ function applyResolvedChainLinkEffects(
         return resultState;
       }
 
-      const resolved = applyResolvedChainLinkEffect(resultState.state, link, eventBuilder);
+      const resolved = applyResolvedChainLinkEffect(resultState.state, link, eventBuilder, links);
 
       return {
         state: resolved.state,
@@ -1041,9 +1144,23 @@ function applyResolvedChainLinkEffect(
   state: DuelState,
   link: ChainLink,
   eventBuilder: EventBuilder,
+  resolvingLinks: readonly ChainLink[],
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
   const script = getCardScriptForDefinitions(link.cardId, state.cardDefinitions, state.cardScripts);
   const effect = script?.effects.find((candidate) => candidate.id === link.effectId);
+
+  if (state.negatedChainLinkIds?.includes(link.id)) {
+    const skipped = createEffectResolvedWithoutEffectEvent(eventBuilder, link, "Chain link was negated.", state.turn);
+    const sourceMoved =
+      effect?.resolution?.sendSourceToGraveyard === false
+        ? { state, events: [] as EngineEvent[] }
+        : sendSourceToGraveyard(state, link, eventBuilder);
+
+    return {
+      state: sourceMoved.state,
+      events: [skipped, ...sourceMoved.events],
+    };
+  }
 
   const targetValidation = validateStoredTargets(state, link.playerId, link.targetSpecs, link.selectedTargets);
 
@@ -1078,7 +1195,7 @@ function applyResolvedChainLinkEffect(
         return stepResult;
       }
 
-      const resolvedStep = applyResolutionStep(stepResult.state, link, effect, step, eventBuilder);
+      const resolvedStep = applyResolutionStep(stepResult.state, link, effect, step, eventBuilder, resolvingLinks);
 
       return {
         state: resolvedStep.state,
@@ -1106,43 +1223,79 @@ function applyResolutionStep(
   _effect: EffectDefinition,
   step: EffectResolutionStep,
   eventBuilder: EventBuilder,
+  resolvingLinks: readonly ChainLink[],
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
   switch (step.kind) {
+    case "add-lingering-effect":
+      return {
+        state: addLingeringEffect(state, link, step.lingering),
+        events: [],
+      };
     case "draw":
       return applyDrawResolutionStep(state, playerForSelector(link.playerId, step.player), step.count, eventBuilder);
     case "add-counter-to-source":
       return applyAddCounterToSourceStep(state, link, step.counterType, step.count, step.max);
     case "modify-pending-battle-atk":
       return applyModifyPendingBattleAtkStep(state, link, step.amount);
+    case "set-pending-battle-atk":
+      return applySetPendingBattleAtkStep(state, link, step.value);
     case "damage-attacker-by-battle-atk-destroy-source":
       return applyDamageAttackerByBattleAtkDestroySourceStep(state, link, eventBuilder);
     case "destroy-targets-damage-both-players-by-monster-atk":
       return applyDestroyTargetsDamageBothPlayersByMonsterAtkStep(state, link, eventBuilder);
     case "destroy-targets":
       return applyDestroyTargetsStep(state, link, eventBuilder);
+    case "destroy-targets-if-spell":
+      return applyDestroyTargetsIfSpellStep(state, link, eventBuilder);
     case "destroy-face-up-monsters-by-type":
       return applyDestroyFaceUpMonstersByTypeStep(state, step.monsterType, eventBuilder);
+    case "draw-then-destroy-controlled-face-up-card-id-if-count":
+      return applyDrawThenDestroyControlledFaceUpCardIdIfCountStep(
+        state,
+        link.playerId,
+        step.cardId,
+        step.count,
+        step.drawCount,
+        eventBuilder,
+      );
+    case "destroy-opponent-face-up-monsters-by-level":
+      return applyDestroyOpponentFaceUpMonstersByLevelStep(state, link.playerId, step.level, eventBuilder);
     case "banish-battle-participants":
       return applyBanishBattleParticipantsStep(state, link, eventBuilder);
     case "destroy-all-spells-traps":
       return applyDestroyAllSpellsTrapsStep(state, link.playerId, step.controller, eventBuilder);
+    case "destroy-all-spells-traps-if-targets-returned-to-hand":
+      return applyDestroyAllSpellsTrapsIfTargetsReturnedToHandStep(state, link, step.controller, eventBuilder);
     case "destroy-all-monsters":
       return applyDestroyAllMonstersStep(state, link.playerId, step.controller, eventBuilder);
+    case "destroy-face-up-monsters":
+      return applyDestroyFaceUpMonstersStep(state, link.playerId, step.controller, eventBuilder);
     case "destroy-attack-source":
       return applyDestroyAttackSourceStep(state, link, eventBuilder);
     case "destroy-opponent-attack-position-monsters":
       return applyDestroyOpponentAttackPositionMonstersStep(state, link.playerId, eventBuilder);
     case "negate-attack":
       return applyNegateAttackStep(state);
+    case "gain-lp-by-attack-source-atk":
+      return applyGainLpByAttackSourceAtkStep(state, link, eventBuilder);
+    case "negate-previous-chain-link":
+      return applyNegatePreviousChainLinkStep(state, link, eventBuilder, resolvingLinks);
     case "place-source-in-spell-trap-zone":
       return applyPlaceSourceInSpellTrapZoneStep(state, link, eventBuilder);
+    case "place-source-in-field-zone":
+      return applyPlaceSourceInFieldZoneStep(state, link, eventBuilder);
+    case "add-lingering-stat-modifiers-to-targets":
+      return applyAddLingeringStatModifiersToTargetsStep(state, link, step);
     case "search-deck-to-hand":
       return applySearchDeckToHandStep(state, playerForSelector(link.playerId, step.player), step.cardIds, step.count, eventBuilder);
+    case "move-targets-to-deck-top-or-hand-if-field-card":
+      return applyMoveTargetsToDeckTopOrHandIfFieldCardStep(state, link, step.fieldCardId, eventBuilder);
     case "special-summon-from-deck":
       return applySpecialSummonFromDeckStep(
         state,
         playerForSelector(link.playerId, step.player),
         step.cardIds,
+        step.monsterFilter,
         step.count,
         step.position ?? "attack",
         eventBuilder,
@@ -1155,22 +1308,99 @@ function applyResolutionStep(
         step.linkToSource ?? false,
         eventBuilder,
       );
+    case "special-summon-targets":
+      return applySpecialSummonTargetsStep(
+        state,
+        link,
+        step.position ?? "attack",
+        step.linkToSource ?? false,
+        step.maxLevel,
+        step.preventDirectAttacks ?? false,
+        eventBuilder,
+      );
+    case "random-own-hand-card-special-summon-or-send-to-graveyard":
+      return applyRandomOwnHandCardSpecialSummonOrSendToGraveyardStep(
+        state,
+        link,
+        step.position ?? "attack",
+        eventBuilder,
+      );
+    case "create-tokens":
+      return applyCreateTokensStep(
+        state,
+        playerForSelector(link.playerId, step.player),
+        step,
+        step.position ?? "attack",
+        eventBuilder,
+      );
+    case "fusion-summon":
+      return applyFusionSummonStep(
+        state,
+        link,
+        step.fusionCardId,
+        step.materialCardIds,
+        step.materialZones ?? ["hand", "monsterZone"],
+        step.position ?? "attack",
+        eventBuilder,
+      );
+    case "ritual-summon":
+      return applyRitualSummonStep(
+        state,
+        link,
+        step.ritualMonsterCardIds,
+        step.ritualMonsterAttribute,
+        step.levelRequirement ?? "at-least",
+        step.requiredLevel,
+        step.position ?? "attack",
+        eventBuilder,
+      );
+    case "special-summon-fusion-by-tributed-level":
+      return applySpecialSummonFusionByTributedLevelStep(
+        state,
+        link,
+        step.position ?? "attack",
+        step.maxLevel,
+        step.preventDirectAttacks ?? false,
+        eventBuilder,
+      );
+    case "return-targets-to-fusion-deck":
+      return applyReturnTargetsToFusionDeckStep(state, link, eventBuilder);
     case "take-control-of-targets":
       return applyTakeControlOfTargetsStep(
         state,
         link,
         step.linkToSource ?? false,
         step.sourceLeaveBehavior,
+        step.returnAtEndPhase ?? false,
         eventBuilder,
       );
+    case "swap-control-targets":
+      return applySwapControlTargetsStep(state, link, eventBuilder);
+    case "equip-source-to-target":
+      return applyEquipSourceToTargetStep(state, link, eventBuilder);
     case "return-source-to-hand":
       return applyReturnSourceToHandStep(state, link, eventBuilder);
     case "change-position":
       return applyChangePositionStep(state, link, step.position, eventBuilder);
+    case "change-position-all-face-up-monsters":
+      return applyChangePositionAllFaceUpMonstersStep(state, link.playerId, step.controller, step.position, eventBuilder);
+    case "set-source-face":
+      return applySetSourceFaceStep(state, link, step.face, step.position, eventBuilder);
     case "set-face":
-      return applySetFaceStep(state, link, step.face, step.position);
+      return applySetFaceStep(state, link, step.face, step.position, eventBuilder);
     case "return-targets-to-hand":
       return applyReturnTargetsToHandStep(state, link, eventBuilder);
+    case "return-targets-to-deck-top":
+      return applyReturnTargetsToDeckTopStep(state, link, eventBuilder);
+    case "lp-change-by-count":
+      return applyLpChangeByCountStep(
+        state,
+        link.playerId,
+        playerForSelector(link.playerId, step.player),
+        step.amountPer,
+        step.count,
+        eventBuilder,
+      );
     case "lp-change":
       return applyLpChangeStep(state, playerForSelector(link.playerId, step.player), step.amount, eventBuilder);
   }
@@ -1200,6 +1430,38 @@ function applyModifyPendingBattleAtkStep(
           {
             instanceId: link.sourceInstanceId,
             amount,
+          },
+        ],
+      },
+    },
+    events: [],
+  };
+}
+
+function applySetPendingBattleAtkStep(
+  state: DuelState,
+  link: ChainLink,
+  value: number,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const pending = state.pendingAttack;
+
+  if (
+    !pending ||
+    (pending.attackerInstanceId !== link.sourceInstanceId && pending.defenderInstanceId !== link.sourceInstanceId)
+  ) {
+    return { state, events: [] };
+  }
+
+  return {
+    state: {
+      ...state,
+      pendingAttack: {
+        ...pending,
+        atkModifiers: [
+          ...(pending.atkModifiers ?? []),
+          {
+            instanceId: link.sourceInstanceId,
+            setTo: value,
           },
         ],
       },
@@ -1329,7 +1591,7 @@ function applyDestroyTargetsDamageBothPlayersByMonsterAtkStep(
         return resultState;
       }
 
-      const base = getMonsterBattleStats(resultState.state.cardDefinitions?.[target.cardId]);
+      const base = getBattleStatsForZoneCard(resultState.state, target);
 
       if (!base) {
         return resultState;
@@ -1396,6 +1658,36 @@ function applyDestroyFaceUpMonstersByTypeStep(
       }
     });
   }
+
+  return targetRefs.reduce(
+    (resultState, targetRef) => {
+      const destroyed = destroyCardAtRef(resultState.state, targetRef, eventBuilder);
+
+      return {
+        state: destroyed.state,
+        events: [...resultState.events, ...destroyed.events],
+      };
+    },
+    { state, events: [] as EngineEvent[] },
+  );
+}
+
+function applyDestroyOpponentFaceUpMonstersByLevelStep(
+  state: DuelState,
+  playerId: PlayerId,
+  level: number,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const opponent = opponentOf(playerId);
+  const targetRefs: ZoneRef[] = [];
+
+  state.players[opponent].monsterZones.forEach((card, index) => {
+    const definition = card ? state.cardDefinitions?.[card.cardId] : null;
+
+    if (card?.face === "faceUp" && definition?.kind === "monster" && definition.monster.level === level) {
+      targetRefs.push({ playerId: opponent, zone: "monsterZone", index });
+    }
+  });
 
   return targetRefs.reduce(
     (resultState, targetRef) => {
@@ -1495,6 +1787,69 @@ function applyDestroyTargetsStep(
   );
 }
 
+function applyDestroyTargetsIfSpellStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const targetInstanceIds = link.selectedTargets?.targetInstanceIds ?? [];
+  const targetRefs = link.selectedTargets?.targetRefs ?? [];
+
+  return targetRefs.reduce(
+    (resultState, targetRef, index) => {
+      const located = targetInstanceIds[index] ? findCardByInstanceId(resultState.state, targetInstanceIds[index]) : null;
+      const target = located?.card ?? cardAtRef(resultState.state, targetRef);
+      const sourceRef = located?.ref ?? targetRef;
+      const definition = target ? resultState.state.cardDefinitions?.[target.cardId] : undefined;
+
+      if (definition?.kind !== "spell") {
+        return resultState;
+      }
+
+      const destroyed = destroyCardAtRef(resultState.state, sourceRef, eventBuilder);
+
+      return {
+        state: destroyed.state,
+        events: [...resultState.events, ...destroyed.events],
+      };
+    },
+    { state, events: [] as EngineEvent[] },
+  );
+}
+
+function applyDrawThenDestroyControlledFaceUpCardIdIfCountStep(
+  state: DuelState,
+  playerId: PlayerId,
+  cardId: string,
+  count: number,
+  drawCount: number,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const refs = controlledFaceUpCardRefsById(state, playerId, cardId);
+
+  if (refs.length < count) {
+    return { state, events: [] };
+  }
+
+  const drawn = applyDrawResolutionStep(state, playerId, drawCount, eventBuilder);
+
+  if (isDuelFinished(drawn.state)) {
+    return drawn;
+  }
+
+  return refs.reduce(
+    (resultState, ref) => {
+      const destroyed = destroyCardAtRef(resultState.state, ref, eventBuilder);
+
+      return {
+        state: destroyed.state,
+        events: [...resultState.events, ...destroyed.events],
+      };
+    },
+    { state: drawn.state, events: [...drawn.events] as EngineEvent[] },
+  );
+}
+
 function applyDestroyAllSpellsTrapsStep(
   state: DuelState,
   activatingPlayerId: PlayerId,
@@ -1514,6 +1869,27 @@ function applyDestroyAllSpellsTrapsStep(
   );
 }
 
+function applyDestroyAllSpellsTrapsIfTargetsReturnedToHandStep(
+  state: DuelState,
+  link: ChainLink,
+  controller: "self" | "opponent" | "all",
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const returned = applyReturnTargetsToHandStep(state, link, eventBuilder);
+  const returnedToHand = returned.events.some((event) => event.type === "card-moved" && event.to.zone === "hand");
+
+  if (!returnedToHand) {
+    return returned;
+  }
+
+  const destroyed = applyDestroyAllSpellsTrapsStep(returned.state, link.playerId, controller, eventBuilder);
+
+  return {
+    state: destroyed.state,
+    events: [...returned.events, ...destroyed.events],
+  };
+}
+
 function applyDestroyAllMonstersStep(
   state: DuelState,
   activatingPlayerId: PlayerId,
@@ -1531,6 +1907,27 @@ function applyDestroyAllMonstersStep(
     },
     { state, events: [] as EngineEvent[] },
   );
+}
+
+function applyDestroyFaceUpMonstersStep(
+  state: DuelState,
+  activatingPlayerId: PlayerId,
+  controller: "self" | "opponent" | "all",
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  return monsterRefsForController(state, activatingPlayerId, controller)
+    .filter((targetRef) => targetRef.zone === "monsterZone" && state.players[targetRef.playerId].monsterZones[targetRef.index]?.face === "faceUp")
+    .reduce(
+      (resultState, targetRef) => {
+        const destroyed = destroyCardAtRef(resultState.state, targetRef, eventBuilder);
+
+        return {
+          state: destroyed.state,
+          events: [...resultState.events, ...destroyed.events],
+        };
+      },
+      { state, events: [] as EngineEvent[] },
+    );
 }
 
 function applyDestroyAttackSourceStep(
@@ -1592,6 +1989,85 @@ function applyNegateAttackStep(state: DuelState): { readonly state: DuelState; r
   };
 }
 
+function applyGainLpByAttackSourceAtkStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const attackEvent = link.triggerEvent?.type === "attack-declared" ? link.triggerEvent : null;
+  const attackerInstanceId = attackEvent?.attackerInstanceId ?? state.pendingAttack?.attackerInstanceId;
+
+  if (!attackerInstanceId) {
+    return { state, events: [] };
+  }
+
+  const located = findCardByInstanceId(state, attackerInstanceId);
+
+  if (!located || located.ref.zone !== "monsterZone" || !isZoneCard(located.card)) {
+    return { state, events: [] };
+  }
+
+  const baseStats = getBattleStatsForZoneCard(state, located.card);
+
+  if (!baseStats) {
+    return { state, events: [] };
+  }
+
+  const derivedStats = deriveBattleStats(state, {
+    playerId: located.ref.playerId,
+    card: located.card,
+    base: baseStats,
+  });
+  const battleStats = state.pendingAttack
+    ? applyPendingBattleAtkModifiers(derivedStats, state.pendingAttack, attackerInstanceId)
+    : derivedStats;
+
+  return applyLpChangeStep(state, link.playerId, Math.max(0, battleStats.atk), eventBuilder);
+}
+
+function applyNegatePreviousChainLinkStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+  resolvingLinks: readonly ChainLink[],
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const previousLinkId = previousChainLinkId(link.id);
+  const previousLink = resolvingLinks.find((candidate) => candidate.id === previousLinkId);
+
+  if (!previousLinkId || !previousLink) {
+    return { state, events: [] };
+  }
+
+  const previousScript = getCardScriptForDefinitions(previousLink.cardId, state.cardDefinitions, state.cardScripts);
+  const previousEffect = previousScript?.effects.find((candidate) => candidate.id === previousLink.effectId);
+
+  if (previousEffect?.cannotBeNegated) {
+    return { state, events: [] };
+  }
+
+  const nextState = {
+    ...state,
+    negatedChainLinkIds: [...(state.negatedChainLinkIds ?? []), previousLinkId],
+  };
+  const destroyed = sendSourceToGraveyard(nextState, previousLink, eventBuilder);
+
+  return {
+    state: destroyed.state,
+    events: destroyed.events,
+  };
+}
+
+function previousChainLinkId(chainLinkId: string): string | null {
+  const match = /^chain-(\d+)$/.exec(chainLinkId);
+  const index = match ? Number(match[1]) : NaN;
+
+  if (!Number.isInteger(index) || index <= 1) {
+    return null;
+  }
+
+  return `chain-${index - 1}`;
+}
+
 function applySearchDeckToHandStep(
   state: DuelState,
   playerId: PlayerId,
@@ -1618,16 +2094,79 @@ function applySearchDeckToHandStep(
     };
 
     nextState = insertIntoZone(removeFromZone(nextState, source).state, destination, card);
-    events.push(createCardMovedEvent(eventBuilder, playerId, toPublicEventCard(card), source, destination, state.turn, "effect-search"));
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        playerId,
+        toPublicEventCard(card),
+        source,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-search",
+      ),
+    );
   }
 
   return { state: nextState, events };
 }
 
+function applyMoveTargetsToDeckTopOrHandIfFieldCardStep(
+  state: DuelState,
+  link: ChainLink,
+  fieldCardId: string,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  let nextState = state;
+  const events: EngineEvent[] = [];
+
+  for (const targetRef of link.selectedTargets?.targetRefs ?? []) {
+    const target = cardAtRef(nextState, targetRef);
+
+    if (!target) {
+      continue;
+    }
+
+    const destinationPlayerId = target.owner;
+    const moveToHand = isFaceUpFieldCardActive(nextState, fieldCardId);
+    const destination: ZoneRef = moveToHand
+      ? { playerId: destinationPlayerId, zone: "hand", index: nextState.players[destinationPlayerId].hand.length }
+      : { playerId: destinationPlayerId, zone: "mainDeck", index: 0 };
+    const removed = removeFromZone(nextState, targetRef);
+
+    nextState = insertIntoZone(removed.state, destination, removed.card);
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        isZoneCard(target) ? toPublicZoneCard(target) : toPublicEventCard(target),
+        targetRef,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        moveToHand ? "effect-search-to-hand" : "effect-search-to-deck-top",
+      ),
+    );
+  }
+
+  return { state: nextState, events };
+}
+
+function isFaceUpFieldCardActive(state: DuelState, cardId: string): boolean {
+  return PLAYERS.some((playerId) => {
+    const fieldCard = state.players[playerId].fieldZone;
+
+    return fieldCard?.cardId === cardId && fieldCard.face === "faceUp";
+  });
+}
+
 function applySpecialSummonFromDeckStep(
   state: DuelState,
   playerId: PlayerId,
-  cardIds: readonly string[],
+  cardIds: readonly string[] | undefined,
+  monsterFilter: DeckMonsterFilter | undefined,
   count: number,
   position: "attack" | "defense",
   eventBuilder: EventBuilder,
@@ -1637,7 +2176,9 @@ function applySpecialSummonFromDeckStep(
 
   for (let summonIndex = 0; summonIndex < count; summonIndex += 1) {
     const zoneIndex = nextState.players[playerId].monsterZones.findIndex((card) => card === null);
-    const deckIndex = nextState.players[playerId].mainDeck.findIndex((card) => cardIds.includes(card.cardId));
+    const deckIndex = nextState.players[playerId].mainDeck.findIndex((card) =>
+      matchesSpecialSummonFromDeckSelector(nextState, card, cardIds, monsterFilter),
+    );
 
     if (zoneIndex < 0 || deckIndex < 0) {
       break;
@@ -1652,7 +2193,19 @@ function applySpecialSummonFromDeckStep(
       position,
       visibility: "public",
     });
-    events.push(createCardMovedEvent(eventBuilder, playerId, toPublicEventCard(card), source, destination, state.turn, "effect-special-summon"));
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        playerId,
+        toPublicEventCard(card),
+        source,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-special-summon",
+      ),
+    );
     events.push(
       createSummonSuccessfulEvent(
         eventBuilder,
@@ -1666,6 +2219,44 @@ function applySpecialSummonFromDeckStep(
   }
 
   return { state: nextState, events };
+}
+
+function matchesSpecialSummonFromDeckSelector(
+  state: DuelState,
+  card: CardInstance,
+  cardIds: readonly string[] | undefined,
+  monsterFilter: DeckMonsterFilter | undefined,
+): boolean {
+  if (cardIds && !cardIds.includes(card.cardId)) {
+    return false;
+  }
+
+  if (!monsterFilter) {
+    return Boolean(cardIds);
+  }
+
+  const definition = state.cardDefinitions?.[card.cardId];
+
+  if (!definition || definition.kind !== "monster") {
+    return false;
+  }
+
+  if (monsterFilter.attribute && definition.monster.attribute !== monsterFilter.attribute) {
+    return false;
+  }
+
+  if (
+    typeof monsterFilter.maxAtk === "number" &&
+    (typeof definition.monster.atk !== "number" || definition.monster.atk > monsterFilter.maxAtk)
+  ) {
+    return false;
+  }
+
+  if (monsterFilter.excludeClassifications?.some((classification) => definition.classifications.includes(classification))) {
+    return false;
+  }
+
+  return true;
 }
 
 function applyPlaceSourceInSpellTrapZoneStep(
@@ -1695,6 +2286,7 @@ function applyPlaceSourceInSpellTrapZoneStep(
     face: "faceUp",
     position: null,
     visibility: "public",
+    ...sentToGraveyardMetadata(state.turn, source.ref),
   });
   const eventCard = isZoneCard(source.card)
     ? toPublicZoneCard({ ...source.card, position: null })
@@ -1703,9 +2295,121 @@ function applyPlaceSourceInSpellTrapZoneStep(
   return {
     state: nextState,
     events: [
-      createCardMovedEvent(eventBuilder, link.playerId, eventCard, source.ref, destination, state.turn, "effect-resolution"),
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        eventCard,
+        source.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-resolution",
+      ),
     ],
   };
+}
+
+function applyPlaceSourceInFieldZoneStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const source = findCardByInstanceId(state, link.sourceInstanceId);
+
+  if (!source || source.ref.zone === "fieldZone") {
+    return { state, events: [] };
+  }
+
+  if (source.ref.zone !== "hand" && source.ref.zone !== "spellTrapZone") {
+    return { state, events: [] };
+  }
+
+  const cleared = (["P1", "P2"] as const).reduce(
+    (result, playerId) => {
+      const fieldCard = result.state.players[playerId].fieldZone;
+
+      if (!fieldCard || fieldCard.instanceId === link.sourceInstanceId) {
+        return result;
+      }
+
+      const destroyed = destroyCardAtRef(result.state, { playerId, zone: "fieldZone" }, eventBuilder);
+
+      return {
+        state: destroyed.state,
+        events: [...result.events, ...destroyed.events],
+      };
+    },
+    { state, events: [] as EngineEvent[] },
+  );
+  const currentSource = findCardByInstanceId(cleared.state, link.sourceInstanceId);
+
+  if (!currentSource || currentSource.ref.zone === "fieldZone" || cleared.state.players[link.playerId].fieldZone) {
+    return cleared;
+  }
+
+  const destination: ZoneRef = { playerId: link.playerId, zone: "fieldZone" };
+  const removed = removeFromZone(cleared.state, currentSource.ref);
+  const nextState = insertIntoZone(removed.state, destination, removed.card, {
+    face: "faceUp",
+    position: null,
+    visibility: "public",
+    ...sentToGraveyardMetadata(state.turn, currentSource.ref),
+  });
+  const eventCard = isZoneCard(currentSource.card)
+    ? toPublicZoneCard({ ...currentSource.card, position: null })
+    : toZoneEventCard(currentSource.card, { position: null });
+
+  return {
+    state: nextState,
+    events: [
+      ...cleared.events,
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        eventCard,
+        currentSource.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-resolution",
+      ),
+    ],
+  };
+}
+
+function applyAddLingeringStatModifiersToTargetsStep(
+  state: DuelState,
+  link: ChainLink,
+  step: Extract<EffectResolutionStep, { kind: "add-lingering-stat-modifiers-to-targets" }>,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const targetInstanceIds = link.selectedTargets?.targetInstanceIds ?? [];
+  const targetRefs = link.selectedTargets?.targetRefs ?? [];
+  const instanceIds = targetInstanceIds.length > 0
+    ? targetInstanceIds
+    : targetRefs
+        .map((ref) => cardAtRef(state, ref))
+        .filter((card): card is ZoneCard => isZoneCard(card))
+        .map((card) => card.instanceId);
+
+  if (instanceIds.length === 0 || step.modifiers.length === 0) {
+    return { state, events: [] };
+  }
+
+  const nextState = addLingeringEffect(state, link, {
+    duration: "until-end-phase",
+    statModifiers: step.modifiers.map((modifier) => ({
+      stat: modifier.stat,
+      amount: modifier.amount,
+      target: {
+        instanceIds,
+        face: "faceUp",
+      },
+    })),
+  });
+
+  return { state: nextState, events: [] };
 }
 
 function applySpecialSummonTargetFromGraveyardStep(
@@ -1744,7 +2448,19 @@ function applySpecialSummonTargetFromGraveyardStep(
       ? toPublicZoneCard({ ...target, position })
       : toZoneEventCard(target, { position });
 
-    events.push(createCardMovedEvent(eventBuilder, link.playerId, eventCard, source, destination, state.turn, "effect-special-summon"));
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        eventCard,
+        source,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-special-summon",
+      ),
+    );
     events.push(
       createSummonSuccessfulEvent(
         eventBuilder,
@@ -1760,11 +2476,758 @@ function applySpecialSummonTargetFromGraveyardStep(
   return { state: nextState, events };
 }
 
+function applySpecialSummonTargetsStep(
+  state: DuelState,
+  link: ChainLink,
+  position: "attack" | "defense",
+  linkToSource: boolean,
+  maxLevel: number | undefined,
+  preventDirectAttacks: boolean,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  let nextState = state;
+  const events: EngineEvent[] = [];
+
+  const targetInstanceIds = link.selectedTargets?.targetInstanceIds ?? [];
+  const targetRefs = link.selectedTargets?.targetRefs ?? [];
+
+  for (let index = 0; index < Math.max(targetRefs.length, targetInstanceIds.length); index += 1) {
+    const targetRef = targetRefs[index];
+    const located = targetInstanceIds[index] ? findCardByInstanceId(nextState, targetInstanceIds[index]) : null;
+    const sourceRef = located?.ref ?? targetRef;
+
+    if (!sourceRef || !isSpecialSummonSourceZone(sourceRef.zone)) {
+      continue;
+    }
+
+    const zoneIndex = nextState.players[link.playerId].monsterZones.findIndex((card) => card === null);
+    const target = located?.card ?? cardAtRef(nextState, sourceRef);
+
+    if (!target || zoneIndex < 0) {
+      continue;
+    }
+
+    if (!isFusionLevelAllowed(nextState, target.cardId, maxLevel)) {
+      continue;
+    }
+
+    const destination: ZoneRef = { playerId: link.playerId, zone: "monsterZone", index: zoneIndex };
+    const removed = removeFromZone(nextState, sourceRef);
+
+    nextState = insertIntoZone(removed.state, destination, removed.card, {
+      face: "faceUp",
+      position,
+      visibility: "public",
+    });
+
+    if (linkToSource) {
+      nextState = linkCardsByInstanceId(nextState, link.sourceInstanceId, target.instanceId);
+    }
+
+    if (preventDirectAttacks) {
+      nextState = addDirectAttackRestriction(nextState, link.playerId, target.instanceId, target.cardId, link.effectId);
+    }
+
+    const eventCard = isZoneCard(target)
+      ? toPublicZoneCard({ ...target, position })
+      : toZoneEventCard(target, { position });
+
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        eventCard,
+        sourceRef,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-special-summon",
+      ),
+    );
+    events.push(
+      createSummonSuccessfulEvent(
+        eventBuilder,
+        link.playerId,
+        eventCard,
+        zoneIndex,
+        "special",
+        state.turn,
+      ),
+    );
+  }
+
+  return { state: nextState, events };
+}
+
+function isSpecialSummonSourceZone(zone: ZoneRef["zone"]): boolean {
+  return zone === "hand" || zone === "mainDeck" || zone === "graveyard" || zone === "banished" || zone === "fusionDeck";
+}
+
+function applyRandomOwnHandCardSpecialSummonOrSendToGraveyardStep(
+  state: DuelState,
+  link: ChainLink,
+  position: "attack" | "defense",
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const hand = state.players[link.playerId].hand;
+
+  if (hand.length === 0) {
+    return { state, events: [] };
+  }
+
+  const random = nextRandom(createRngState(`${state.seed}:${state.turn}:${state.phase}:${state.eventIds.length}:${link.id}:${link.sourceInstanceId}`));
+  const handIndex = Math.min(hand.length - 1, Math.floor(random.value * hand.length));
+  const source: ZoneRef = { playerId: link.playerId, zone: "hand", index: handIndex };
+  const selected = hand[handIndex];
+
+  if (!selected) {
+    return { state, events: [] };
+  }
+
+  const definition = state.cardDefinitions?.[selected.cardId];
+  const summonZoneIndex = state.players[link.playerId].monsterZones.findIndex((card) => card === null);
+  const canSpecialSummon = definition?.kind === "monster" && summonZoneIndex >= 0;
+  const destination: ZoneRef = canSpecialSummon
+    ? { playerId: link.playerId, zone: "monsterZone", index: summonZoneIndex }
+    : { playerId: link.playerId, zone: "graveyard", index: 0 };
+  const removed = removeFromZone(state, source);
+  const nextState = insertIntoZone(removed.state, destination, removed.card, canSpecialSummon
+    ? { face: "faceUp", position, visibility: "public" }
+    : {
+        face: "faceUp",
+        visibility: "public",
+        ...sentToGraveyardMetadata(state.turn, source),
+      });
+  const eventCard = toZoneEventCard(selected, { position: canSpecialSummon ? position : null });
+  const events: EngineEvent[] = [
+    createCardMovedEvent(
+      eventBuilder,
+      link.playerId,
+      eventCard,
+      source,
+      destination,
+      state.turn,
+      state.phase,
+      state.chain.length,
+      canSpecialSummon ? "effect-special-summon" : "effect-send-to-graveyard",
+    ),
+  ];
+
+  if (canSpecialSummon) {
+    events.push(
+      createSummonSuccessfulEvent(
+        eventBuilder,
+        link.playerId,
+        eventCard,
+        summonZoneIndex,
+        "special",
+        state.turn,
+      ),
+    );
+  }
+
+  return { state: nextState, events };
+}
+
+function sentToGraveyardMetadata(turn: number, ref: ZoneRef) {
+  return {
+    sentToGraveyardTurn: turn,
+    sentToGraveyardFromController: ref.playerId,
+    sentToGraveyardFromZone: ref.zone,
+  };
+}
+
+function applyCreateTokensStep(
+  state: DuelState,
+  playerId: PlayerId,
+  token: Extract<EffectResolutionStep, { kind: "create-tokens" }>,
+  position: "attack" | "defense",
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const availableZones = state.players[playerId].monsterZones
+    .map((card, index) => card === null ? index : -1)
+    .filter((index) => index >= 0);
+
+  if (availableZones.length < token.count) {
+    return { state, events: [] };
+  }
+
+  let nextState = state;
+  const events: EngineEvent[] = [];
+  const tokenData: TokenData = {
+    name: token.name,
+    monsterType: token.monsterType,
+    attribute: token.attribute,
+    level: token.level,
+    atk: token.atk,
+    def: token.def,
+    ...(token.cannotBeTributedForTributeSummon ? { cannotBeTributedForTributeSummon: true } : {}),
+  };
+
+  for (let tokenIndex = 0; tokenIndex < token.count; tokenIndex += 1) {
+    const zoneIndex = availableZones[tokenIndex];
+    const instanceId = `${playerId}-token-${slugTokenName(token.name)}-${state.turn}-${state.eventIds.length}-${tokenIndex + 1}`;
+    const tokenCard: ZoneCard = {
+      instanceId,
+      cardId: `token:${slugTokenName(token.name)}`,
+      owner: playerId,
+      controller: playerId,
+      face: "faceUp",
+      position,
+      visibility: "public",
+      counters: {},
+      attachments: [],
+      summonedTurn: state.turn,
+      positionChangedTurn: null,
+      attackedTurn: null,
+      token: tokenData,
+    };
+    const destination: ZoneRef = { playerId, zone: "monsterZone", index: zoneIndex };
+
+    nextState = insertIntoZone(nextState, destination, tokenCard, {
+      face: "faceUp",
+      position,
+      visibility: "public",
+    });
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        playerId,
+        tokenCard,
+        { playerId, zone: "banished", index: 0 },
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "token-created",
+      ),
+    );
+    events.push(createSummonSuccessfulEvent(eventBuilder, playerId, tokenCard, zoneIndex, "special", state.turn));
+  }
+
+  return { state: nextState, events };
+}
+
+function slugTokenName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function applyFusionSummonStep(
+  state: DuelState,
+  link: ChainLink,
+  fusionCardId: string,
+  materialCardIds: readonly string[],
+  materialZones: readonly ("hand" | "monsterZone")[],
+  position: "attack" | "defense",
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const materialRefs = link.selectedTargets?.targetRefs ?? [];
+  const materialCards = materialRefs.map((ref) => ({ ref, card: cardAtRef(state, ref) }));
+
+  if (
+    materialCards.length !== materialCardIds.length ||
+    !materialCards.every((material) =>
+      material.card &&
+      materialZones.includes(material.ref.zone as "hand" | "monsterZone") &&
+      material.card.owner === link.playerId,
+    ) ||
+    !matchesExactMaterialIds(materialCards.map((material) => material.card!.cardId), materialCardIds)
+  ) {
+    return { state, events: [] };
+  }
+
+  const fusionIndex = state.players[link.playerId].fusionDeck?.findIndex((card) => card.cardId === fusionCardId) ?? -1;
+  const zoneIndex = state.players[link.playerId].monsterZones.findIndex((card) => card === null);
+
+  if (fusionIndex < 0 || zoneIndex < 0) {
+    return { state, events: [] };
+  }
+
+  let nextState = state;
+  const events: EngineEvent[] = [];
+
+  for (const material of materialCards) {
+    const located = findCardByInstanceId(nextState, material.card!.instanceId);
+
+    if (!located) {
+      return { state, events };
+    }
+
+    const destination: ZoneRef = { playerId: located.card.owner, zone: "graveyard", index: 0 };
+    const removed = removeFromZone(nextState, located.ref);
+    nextState = insertIntoZone(removed.state, destination, removed.card, {
+      face: "faceUp",
+      position: null,
+      visibility: "public",
+      ...sentToGraveyardMetadata(state.turn, located.ref),
+    });
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        isZoneCard(located.card) ? toPublicZoneCard({ ...located.card, position: null }) : toPublicEventCard(located.card),
+        located.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "fusion-material",
+      ),
+    );
+  }
+
+  return specialSummonFusionFromDeck(nextState, link.playerId, fusionCardId, position, eventBuilder, state, events);
+}
+
+function validateProcedureSelection(
+  state: DuelState,
+  playerId: PlayerId,
+  sourceInstanceId: string,
+  effect: EffectDefinition,
+  selectedTargets: SelectedTargets,
+): string | null {
+  for (const step of effect.resolution?.steps ?? []) {
+    if (step.kind === "ritual-summon") {
+      const selection = getRitualSummonSelection(
+        state,
+        playerId,
+        selectedTargets.targetRefs,
+        step.ritualMonsterCardIds,
+        step.ritualMonsterAttribute,
+        step.levelRequirement ?? "at-least",
+        step.requiredLevel,
+      );
+
+      if (selection.error) {
+        return selection.error;
+      }
+    }
+
+    if (step.kind === "equip-source-to-target") {
+      const error = validateEquipSourceToTargetSelection(state, playerId, sourceInstanceId, selectedTargets.targetRefs);
+
+      if (error) {
+        return error;
+      }
+    }
+
+    if (step.kind === "create-tokens") {
+      const tokenPlayerId = playerForSelector(playerId, step.player);
+      const availableZones = state.players[tokenPlayerId].monsterZones.filter((card) => card === null).length;
+
+      if (availableZones < step.count) {
+        return "Not enough Monster Zones are available for those Tokens.";
+      }
+    }
+  }
+
+  return null;
+}
+
+function applyRitualSummonStep(
+  state: DuelState,
+  link: ChainLink,
+  ritualMonsterCardIds: readonly string[] | undefined,
+  ritualMonsterAttribute: string | undefined,
+  levelRequirement: "at-least" | "exact",
+  requiredLevel: number | undefined,
+  position: "attack" | "defense",
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const selection = getRitualSummonSelection(
+    state,
+    link.playerId,
+    link.selectedTargets?.targetRefs ?? [],
+    ritualMonsterCardIds,
+    ritualMonsterAttribute,
+    levelRequirement,
+    requiredLevel,
+  );
+
+  if (!selection.selection) {
+    return { state, events: [] };
+  }
+
+  let nextState = state;
+  const events: EngineEvent[] = [];
+
+  for (const tribute of selection.selection.tributes) {
+    const located = findCardByInstanceId(nextState, tribute.card.instanceId);
+
+    if (!located) {
+      return { state, events };
+    }
+
+    const destination: ZoneRef = { playerId: located.card.owner, zone: "graveyard", index: 0 };
+    const removed = removeFromZone(nextState, located.ref);
+    nextState = insertIntoZone(removed.state, destination, removed.card, {
+      face: "faceUp",
+      position: null,
+      visibility: "public",
+      ...sentToGraveyardMetadata(state.turn, located.ref),
+    });
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        isZoneCard(located.card) ? toPublicZoneCard({ ...located.card, position: null }) : toPublicEventCard(located.card),
+        located.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "ritual-tribute",
+      ),
+    );
+  }
+
+  const ritual = findCardByInstanceId(nextState, selection.selection.ritualMonster.card.instanceId);
+  const zoneIndex = nextState.players[link.playerId].monsterZones.findIndex((card) => card === null);
+
+  if (!ritual || ritual.ref.zone !== "hand" || zoneIndex < 0) {
+    return { state, events };
+  }
+
+  const destination: ZoneRef = { playerId: link.playerId, zone: "monsterZone", index: zoneIndex };
+  const zoneCard = toZoneEventCard(ritual.card, { position });
+  const removed = removeFromZone(nextState, ritual.ref);
+  nextState = insertIntoZone(removed.state, destination, ritual.card, {
+    face: "faceUp",
+    position,
+    visibility: "public",
+  });
+  events.push(
+    createCardMovedEvent(
+      eventBuilder,
+      link.playerId,
+      zoneCard,
+      ritual.ref,
+      destination,
+      state.turn,
+      state.phase,
+      state.chain.length,
+      "ritual-summon",
+    ),
+  );
+  events.push(createSummonSuccessfulEvent(eventBuilder, link.playerId, zoneCard, zoneIndex, "special", state.turn));
+
+  return { state: nextState, events };
+}
+
+function getRitualSummonSelection(
+  state: DuelState,
+  playerId: PlayerId,
+  targetRefs: readonly ZoneRef[],
+  ritualMonsterCardIds: readonly string[] | undefined,
+  ritualMonsterAttribute: string | undefined,
+  levelRequirement: "at-least" | "exact",
+  requiredLevel: number | undefined,
+): { readonly selection?: RitualSummonSelection; readonly error?: string } {
+  if (targetRefs.length === 0) {
+    return { error: "Ritual Summon requires a Ritual Monster and Tributes." };
+  }
+
+  if (state.players[playerId].monsterZones.every((card) => card !== null)) {
+    return { error: "No Monster Zone is available for the Ritual Summon." };
+  }
+
+  const selectedCards: RitualSummonCard[] = [];
+  const seenInstanceIds = new Set<string>();
+
+  for (const ref of targetRefs) {
+    const card = cardAtRef(state, ref);
+    const definition = card ? state.cardDefinitions?.[card.cardId] : undefined;
+
+    if (!card || !definition) {
+      return { error: "Ritual Summon selection contains a missing card." };
+    }
+
+    if (seenInstanceIds.has(card.instanceId)) {
+      return { error: "Ritual Summon selection cannot use the same card more than once." };
+    }
+
+    seenInstanceIds.add(card.instanceId);
+    selectedCards.push({ ref, card, definition });
+  }
+
+  const ritualMonsters = selectedCards.filter((candidate) =>
+    candidate.ref.playerId === playerId &&
+    candidate.ref.zone === "hand" &&
+    isRitualMonsterDefinition(candidate.definition),
+  );
+
+  if (ritualMonsters.length !== 1) {
+    return { error: "Ritual Summon requires exactly one Ritual Monster from your hand." };
+  }
+
+  const ritualMonster = ritualMonsters[0];
+
+  if (ritualMonsterCardIds && !ritualMonsterCardIds.includes(ritualMonster.card.cardId)) {
+    return { error: "Ritual Spell cannot Ritual Summon that monster." };
+  }
+
+  if (
+    ritualMonsterAttribute &&
+    ritualMonster.definition.kind === "monster" &&
+    ritualMonster.definition.monster.attribute !== ritualMonsterAttribute
+  ) {
+    return { error: `Ritual Monster must be ${ritualMonsterAttribute}.` };
+  }
+
+  const tributes = selectedCards.filter((candidate) => candidate.card.instanceId !== ritualMonster.card.instanceId);
+
+  if (tributes.length === 0) {
+    return { error: "Ritual Summon requires at least one Tribute." };
+  }
+
+  for (const tribute of tributes) {
+    const controlledFieldMonster = tribute.ref.playerId === playerId &&
+      tribute.ref.zone === "monsterZone" &&
+      isZoneCard(tribute.card) &&
+      tribute.card.controller === playerId;
+    const ownHandMonster = tribute.ref.playerId === playerId && tribute.ref.zone === "hand";
+
+    if (tribute.definition.kind !== "monster" || (!controlledFieldMonster && !ownHandMonster)) {
+      return { error: "Ritual Tributes must be monsters from your hand or field." };
+    }
+  }
+
+  const required = requiredLevel ?? (ritualMonster.definition.kind === "monster" ? ritualMonster.definition.monster.level ?? 0 : 0);
+  const total = tributes.reduce((sum, tribute) => {
+    return sum + (tribute.definition.kind === "monster" ? tribute.definition.monster.level ?? 0 : 0);
+  }, 0);
+  const levelValid = levelRequirement === "exact" ? total === required : total >= required;
+
+  if (!levelValid) {
+    return {
+      error: levelRequirement === "exact"
+        ? `Ritual Tribute Levels must equal ${required}.`
+        : `Ritual Tribute Levels must equal ${required} or more.`,
+    };
+  }
+
+  return {
+    selection: {
+      ritualMonster,
+      tributes: Object.freeze([...tributes]),
+      requiredLevel: required,
+      levelRequirement,
+      totalTributeLevel: total,
+    },
+  };
+}
+
+function isRitualMonsterDefinition(definition: CardDefinition): boolean {
+  return definition.kind === "monster" && definition.classifications.includes("Ritual");
+}
+
+function applySpecialSummonFusionByTributedLevelStep(
+  state: DuelState,
+  link: ChainLink,
+  position: "attack" | "defense",
+  maxLevel: number | undefined,
+  preventDirectAttacks: boolean,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const fusionRef = link.selectedTargets?.targetRefs?.find((ref) => ref.zone === "fusionDeck");
+  const tributeInstanceId = link.paidCosts
+    ?.find((cost) => cost.kind === "tribute-source" || cost.kind === "tribute")
+    ?.instanceIds?.[0];
+  const tribute = tributeInstanceId ? findCardByInstanceId(state, tributeInstanceId) : null;
+  const tributeLevel = tribute ? monsterLevel(state, tribute.card.cardId) : null;
+  const fusionCard = fusionRef ? cardAtRef(state, fusionRef) : null;
+  const fusionLevel = fusionCard ? monsterLevel(state, fusionCard.cardId) : null;
+
+  if (
+    !fusionRef ||
+    !fusionCard ||
+    tributeLevel === null ||
+    fusionLevel !== tributeLevel ||
+    (maxLevel !== undefined && fusionLevel > maxLevel)
+  ) {
+    return { state, events: [] };
+  }
+
+  const summoned = specialSummonFusionFromDeck(state, link.playerId, fusionCard.cardId, position, eventBuilder, state, []);
+
+  if (!preventDirectAttacks || summoned.events.length === 0) {
+    return summoned;
+  }
+
+  const summonedCard = summoned.state.players[link.playerId].monsterZones.find((card) => card?.cardId === fusionCard.cardId);
+
+  return {
+    state: summonedCard
+      ? addDirectAttackRestriction(summoned.state, link.playerId, summonedCard.instanceId, summonedCard.cardId, link.effectId)
+      : summoned.state,
+    events: summoned.events,
+  };
+}
+
+function applyReturnTargetsToFusionDeckStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  let nextState = state;
+  const events: EngineEvent[] = [];
+
+  for (const targetRef of link.selectedTargets?.targetRefs ?? []) {
+    const target = cardAtRef(nextState, targetRef);
+
+    if (!target || !isFusionMonsterCard(nextState, target.cardId)) {
+      continue;
+    }
+
+    const destination: ZoneRef = {
+      playerId: target.owner,
+      zone: "fusionDeck",
+      index: nextState.players[target.owner].fusionDeck?.length ?? 0,
+    };
+    const removed = removeFromZone(nextState, targetRef);
+    nextState = insertIntoZone(removed.state, destination, removed.card);
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        isZoneCard(target) ? toPublicZoneCard({ ...target, position: null }) : toPublicEventCard(target),
+        targetRef,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "fusion-return",
+      ),
+    );
+  }
+
+  return { state: nextState, events };
+}
+
+function specialSummonFusionFromDeck(
+  state: DuelState,
+  playerId: PlayerId,
+  fusionCardId: string,
+  position: "attack" | "defense",
+  eventBuilder: EventBuilder,
+  eventState: DuelState,
+  previousEvents: readonly EngineEvent[],
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const fusionIndex = state.players[playerId].fusionDeck?.findIndex((card) => card.cardId === fusionCardId) ?? -1;
+  const zoneIndex = state.players[playerId].monsterZones.findIndex((card) => card === null);
+
+  if (fusionIndex < 0 || zoneIndex < 0) {
+    return { state, events: previousEvents };
+  }
+
+  const source: ZoneRef = { playerId, zone: "fusionDeck", index: fusionIndex };
+  const destination: ZoneRef = { playerId, zone: "monsterZone", index: zoneIndex };
+  const fusionCard = state.players[playerId].fusionDeck![fusionIndex];
+  const nextState = insertIntoZone(removeFromZone(state, source).state, destination, fusionCard, {
+    face: "faceUp",
+    position,
+    visibility: "public",
+  });
+  const eventCard = toZoneEventCard(fusionCard, { position });
+  const events: EngineEvent[] = [...previousEvents];
+
+  events.push(
+    createCardMovedEvent(
+      eventBuilder,
+      playerId,
+      eventCard,
+      source,
+      destination,
+      eventState.turn,
+      eventState.phase,
+      eventState.chain.length,
+      "fusion-summon",
+    ),
+  );
+  events.push(createSummonSuccessfulEvent(eventBuilder, playerId, eventCard, zoneIndex, "special", eventState.turn));
+
+  return { state: nextState, events };
+}
+
+function matchesExactMaterialIds(actualCardIds: readonly string[], requiredCardIds: readonly string[]): boolean {
+  const actual = [...actualCardIds].sort();
+  const required = [...requiredCardIds].sort();
+
+  return actual.length === required.length && actual.every((cardId, index) => cardId === required[index]);
+}
+
+function monsterLevel(state: DuelState, cardId: string): number | null {
+  const definition = state.cardDefinitions?.[cardId];
+
+  return definition?.kind === "monster" && typeof definition.monster.level === "number" ? definition.monster.level : null;
+}
+
+function getBattleStatsForZoneCard(state: DuelState, card: ZoneCard) {
+  if (card.token) {
+    return {
+      atk: card.token.atk,
+      def: card.token.def,
+    };
+  }
+
+  return getMonsterBattleStats(state.cardDefinitions?.[card.cardId]);
+}
+
+function isFusionLevelAllowed(state: DuelState, cardId: string, maxLevel: number | undefined): boolean {
+  if (maxLevel === undefined) {
+    return true;
+  }
+
+  const level = monsterLevel(state, cardId);
+
+  return level !== null && level <= maxLevel;
+}
+
+function isFusionMonsterCard(state: DuelState, cardId: string): boolean {
+  return state.cardDefinitions?.[cardId]?.classifications.includes("Fusion") === true;
+}
+
+function addDirectAttackRestriction(
+  state: DuelState,
+  playerId: PlayerId,
+  instanceId: string,
+  cardId: string,
+  effectId: string,
+): DuelState {
+  return {
+    ...state,
+    lingeringEffects: [
+      ...(state.lingeringEffects ?? []),
+      {
+        id: `lingering-${state.eventIds.length + (state.lingeringEffects?.length ?? 0) + 1}`,
+        playerId,
+        sourceInstanceId: instanceId,
+        sourceCardId: cardId,
+        effectId,
+        expiresAtTurn: state.turn,
+        expiresAtPhase: "EP",
+        definition: {
+          duration: "until-end-phase",
+          removeWhenSourceLeavesField: true,
+          directAttackRestrictions: [
+            {
+              target: { instanceIds: [instanceId] },
+              reason: "That Fusion Monster cannot attack directly this turn.",
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 function applyTakeControlOfTargetsStep(
   state: DuelState,
   link: ChainLink,
   linkToSource: boolean,
   sourceLeaveBehavior: AttachmentLeaveBehavior | undefined,
+  returnAtEndPhase: boolean,
   eventBuilder: EventBuilder,
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
   let nextState = state;
@@ -1780,6 +3243,7 @@ function applyTakeControlOfTargetsStep(
 
     const source: ZoneRef = targetRef;
     const destination: ZoneRef = { playerId: link.playerId, zone: "monsterZone", index: zoneIndex };
+    const returnPlayerId = targetRef.playerId;
     const controlledTarget: ZoneCard = {
       ...target,
       controller: link.playerId,
@@ -1804,6 +3268,10 @@ function applyTakeControlOfTargetsStep(
       });
     }
 
+    if (returnAtEndPhase) {
+      nextState = scheduleControlReturn(nextState, target.instanceId, returnPlayerId);
+    }
+
     events.push(
       createCardMovedEvent(
         eventBuilder,
@@ -1812,12 +3280,251 @@ function applyTakeControlOfTargetsStep(
         source,
         destination,
         state.turn,
+        state.phase,
+        state.chain.length,
         "control-change",
       ),
     );
   }
 
   return { state: nextState, events };
+}
+
+function applySwapControlTargetsStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const targetRefs = link.selectedTargets?.targetRefs ?? [];
+
+  if (targetRefs.length !== 2) {
+    return { state, events: [] };
+  }
+
+  const ownRef = targetRefs.find((ref) => ref.playerId === link.playerId && ref.zone === "monsterZone");
+  const opponentRef = targetRefs.find((ref) => ref.playerId !== link.playerId && ref.zone === "monsterZone");
+  const ownTarget = ownRef ? cardAtRef(state, ownRef) : null;
+  const opponentTarget = opponentRef ? cardAtRef(state, opponentRef) : null;
+
+  if (!ownRef || !opponentRef || !isZoneCard(ownTarget) || !isZoneCard(opponentTarget)) {
+    return { state, events: [] };
+  }
+
+  const opponentPlayerId = opponentRef.playerId;
+  const controlledOwn: ZoneCard = { ...ownTarget, controller: opponentPlayerId };
+  const controlledOpponent: ZoneCard = { ...opponentTarget, controller: link.playerId };
+  const withoutOwn = removeFromZone(state, ownRef);
+  const withoutBoth = removeFromZone(withoutOwn.state, opponentRef);
+  let nextState = insertIntoZone(withoutBoth.state, ownRef, controlledOpponent);
+  nextState = insertIntoZone(nextState, opponentRef, controlledOwn);
+
+  return {
+    state: nextState,
+    events: [
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        toPublicZoneCard(controlledOpponent),
+        opponentRef,
+        ownRef,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "control-change",
+      ),
+      createCardMovedEvent(
+        eventBuilder,
+        opponentPlayerId,
+        toPublicZoneCard(controlledOwn),
+        ownRef,
+        opponentRef,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "control-change",
+      ),
+    ],
+  };
+}
+
+function scheduleControlReturn(state: DuelState, instanceId: string, returnPlayerId: PlayerId): DuelState {
+  const existing = state.controlChangeReturns ?? [];
+
+  return {
+    ...state,
+    controlChangeReturns: [
+      ...existing.filter((controlReturn) => controlReturn.instanceId !== instanceId),
+      {
+        id: `control-return-${state.eventIds.length + existing.length + 1}`,
+        instanceId,
+        returnPlayerId,
+        expiresAtTurn: state.turn,
+        expiresAtPhase: "EP",
+      },
+    ],
+  };
+}
+
+function applyScheduledControlReturns(
+  state: DuelState,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  let nextState = state;
+  const events: EngineEvent[] = [];
+  const remainingReturns = (state.controlChangeReturns ?? []).filter((controlReturn) => {
+    if (controlReturn.expiresAtPhase !== "EP" || state.phase !== "EP" || controlReturn.expiresAtTurn > state.turn) {
+      return true;
+    }
+
+    const returned = returnControlOfCardToPlayer(
+      nextState,
+      controlReturn.instanceId,
+      controlReturn.returnPlayerId,
+      undefined,
+      eventBuilder,
+    );
+
+    nextState = returned.state;
+    events.push(...returned.events);
+    return false;
+  });
+
+  return {
+    state: {
+      ...nextState,
+      controlChangeReturns: remainingReturns,
+    },
+    events,
+  };
+}
+
+function validateEquipSourceToTargetSelection(
+  state: DuelState,
+  playerId: PlayerId,
+  sourceInstanceId: string,
+  targetRefs: readonly ZoneRef[],
+): string | null {
+  const source = findCardByInstanceId(state, sourceInstanceId);
+
+  if (!source || source.ref.playerId !== playerId) {
+    return "Equip source is not controlled by that player.";
+  }
+
+  if (source.ref.zone !== "hand" && source.ref.zone !== "spellTrapZone") {
+    return "Equip source must be in hand or the Spell/Trap Zone.";
+  }
+
+  if (isZoneCard(source.card) && source.card.attachments.length > 0) {
+    return "Equip source is already equipped.";
+  }
+
+  if (source.ref.zone === "hand" && state.players[playerId].spellTrapZones.every((card) => card !== null)) {
+    return "No Spell/Trap Zone is available for that Equip Card.";
+  }
+
+  if (targetRefs.length !== 1) {
+    return "Equip activation requires exactly one target monster.";
+  }
+
+  const targetRef = targetRefs[0];
+  const target = cardAtRef(state, targetRef);
+
+  if (targetRef.zone !== "monsterZone" || !isZoneCard(target)) {
+    return "Equip target must be a monster on the field.";
+  }
+
+  if (target.face !== "faceUp") {
+    return "Equip target must be face-up.";
+  }
+
+  if (target.attachments.includes(sourceInstanceId)) {
+    return "Equip source is already equipped to that monster.";
+  }
+
+  return null;
+}
+
+function applyEquipSourceToTargetStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const targetRef = link.selectedTargets?.targetRefs?.[0];
+  const target = targetRef ? cardAtRef(state, targetRef) : null;
+
+  if (!targetRef || targetRef.zone !== "monsterZone" || !isZoneCard(target) || target.face !== "faceUp") {
+    return { state, events: [] };
+  }
+
+  let nextState = state;
+  const events: EngineEvent[] = [];
+  let source = findCardByInstanceId(nextState, link.sourceInstanceId);
+
+  if (!source || source.ref.playerId !== link.playerId || (source.ref.zone !== "hand" && source.ref.zone !== "spellTrapZone")) {
+    return { state, events: [] };
+  }
+
+  if (isZoneCard(source.card) && source.card.attachments.length > 0) {
+    return { state, events: [] };
+  }
+
+  if (source.ref.zone === "hand") {
+    const zoneIndex = nextState.players[link.playerId].spellTrapZones.findIndex((card) => card === null);
+
+    if (zoneIndex < 0) {
+      return { state, events: [] };
+    }
+
+    const destination: ZoneRef = { playerId: link.playerId, zone: "spellTrapZone", index: zoneIndex };
+    const removed = removeFromZone(nextState, source.ref);
+    nextState = insertIntoZone(removed.state, destination, removed.card, {
+      face: "faceUp",
+      position: null,
+      visibility: "public",
+    });
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        isZoneCard(source.card) ? toPublicZoneCard({ ...source.card, position: null }) : toZoneEventCard(source.card, { position: null }),
+        source.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "equip",
+      ),
+    );
+    source = findCardByInstanceId(nextState, link.sourceInstanceId);
+  }
+
+  const currentTarget = findCardByInstanceId(nextState, target.instanceId);
+
+  if (
+    !source ||
+    !currentTarget ||
+    source.ref.zone !== "spellTrapZone" ||
+    currentTarget.ref.zone !== "monsterZone" ||
+    !isZoneCard(source.card) ||
+    !isZoneCard(currentTarget.card) ||
+    currentTarget.card.face !== "faceUp"
+  ) {
+    return { state, events };
+  }
+
+  const linked = linkCardsByInstanceId(nextState, source.card.instanceId, currentTarget.card.instanceId, {
+      firstBehaviorForSecond: "detach-linked",
+    });
+  const linkedSource = findCardByInstanceId(linked, source.card.instanceId);
+
+  if (!linkedSource || !isZoneCard(linkedSource.card)) {
+    return { state: linked, events };
+  }
+
+  return {
+    state: replaceZoneCardAtRef(linked, linkedSource.ref, addEffectMarker(linkedSource.card, link.effectId)),
+    events,
+  };
 }
 
 function applyReturnSourceToHandStep(
@@ -1841,7 +3548,19 @@ function applyReturnSourceToHandStep(
 
   return {
     state: nextState,
-    events: [createCardMovedEvent(eventBuilder, located.ref.playerId, eventCard, located.ref, destination, state.turn, "effect")],
+    events: [
+      createCardMovedEvent(
+        eventBuilder,
+        located.ref.playerId,
+        eventCard,
+        located.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect",
+      ),
+    ],
   };
 }
 
@@ -1868,13 +3587,58 @@ function applyChangePositionStep(
   return { state: nextState, events };
 }
 
+function applyChangePositionAllFaceUpMonstersStep(
+  state: DuelState,
+  activatingPlayerId: PlayerId,
+  controller: "self" | "opponent" | "all",
+  position: "attack" | "defense" | undefined,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  let nextState = state;
+  const events: EngineEvent[] = [];
+  const targetPlayerIds: PlayerId[] =
+    controller === "self"
+      ? [activatingPlayerId]
+      : controller === "opponent"
+        ? [opponentOf(activatingPlayerId)]
+        : ["P1", "P2"];
+
+  for (const playerId of targetPlayerIds) {
+    nextState.players[playerId].monsterZones.forEach((card, index) => {
+      if (!card || card.face !== "faceUp" || card.position === null) {
+        return;
+      }
+
+      const nextPosition: "attack" | "defense" =
+        position ?? (card.position === "attack" ? "defense" : "attack");
+
+      if (nextPosition === card.position) {
+        return;
+      }
+
+      const ref: ZoneRef = { playerId, zone: "monsterZone", index };
+      const previous = card.position;
+      nextState = updateMonsterPosition(nextState, ref, nextPosition);
+      const updated = cardAtRef(nextState, ref);
+
+      if (isZoneCard(updated)) {
+        events.push(createPositionChangedEvent(eventBuilder, playerId, updated, previous, nextPosition, nextState.turn));
+      }
+    });
+  }
+
+  return { state: nextState, events };
+}
+
 function applySetFaceStep(
   state: DuelState,
   link: ChainLink,
   face: "faceUp" | "faceDown",
   position: "attack" | "defense" | undefined,
+  eventBuilder: EventBuilder,
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
   let nextState = state;
+  const events: EngineEvent[] = [];
 
   for (const targetRef of link.selectedTargets?.targetRefs ?? []) {
     const card = cardAtRef(nextState, targetRef);
@@ -1888,9 +3652,51 @@ function applySetFaceStep(
     if (targetRef.zone === "monsterZone" && position) {
       nextState = updateMonsterPosition(nextState, targetRef, position);
     }
+
+    if (targetRef.zone === "monsterZone" && face === "faceDown" && isZoneCard(card) && card.attachments.length > 0) {
+      const updated = findCardByInstanceId(nextState, card.instanceId);
+
+      if (updated && isZoneCard(updated.card)) {
+        const detached = handleLinkedCardsOnIllegalAttachment(nextState, updated.card, eventBuilder);
+        nextState = detached.state;
+        events.push(...detached.events);
+      }
+    }
+
+    if (targetRef.zone === "monsterZone" && card.face === "faceDown" && face === "faceUp") {
+      events.push(createMonsterFlippedFaceUpEvent(eventBuilder, targetRef.playerId, {
+        ...card,
+        face: "faceUp",
+        visibility: "public",
+      }, targetRef.index, "effect", nextState.turn));
+    }
   }
 
-  return { state: nextState, events: [] };
+  return { state: nextState, events };
+}
+
+function applySetSourceFaceStep(
+  state: DuelState,
+  link: ChainLink,
+  face: "faceUp" | "faceDown",
+  position: "attack" | "defense" | undefined,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const source = findCardByInstanceId(state, link.sourceInstanceId);
+
+  if (!source || !isZoneCard(source.card) || source.ref.zone === "mainDeck" || source.ref.zone === "hand") {
+    return { state, events: [] };
+  }
+
+  const selectedLink: ChainLink = {
+    ...link,
+    selectedTargets: {
+      targetRefs: [source.ref],
+      targetPlayerIds: [],
+    },
+  };
+
+  return applySetFaceStep(state, selectedLink, face, position, eventBuilder);
 }
 
 function applyReturnTargetsToHandStep(
@@ -1898,9 +3704,12 @@ function applyReturnTargetsToHandStep(
   link: ChainLink,
   eventBuilder: EventBuilder,
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
-  return (link.selectedTargets?.targetRefs ?? []).reduce(
-    (resultState, targetRef) => {
-      const moved = moveTargetToHand(resultState.state, targetRef, eventBuilder);
+  const targetInstanceIds = link.selectedTargets?.targetInstanceIds ?? [];
+  const targetRefs = link.selectedTargets?.targetRefs ?? [];
+
+  return targetRefs.reduce(
+    (resultState, targetRef, index) => {
+      const moved = moveTargetToHand(resultState.state, targetRef, eventBuilder, targetInstanceIds[index]);
 
       return {
         state: moved.state,
@@ -1909,6 +3718,48 @@ function applyReturnTargetsToHandStep(
     },
     { state, events: [] as EngineEvent[] },
   );
+}
+
+function applyReturnTargetsToDeckTopStep(
+  state: DuelState,
+  link: ChainLink,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  let nextState = state;
+  const events: EngineEvent[] = [];
+  const targetInstanceIds = link.selectedTargets?.targetInstanceIds ?? [];
+  const targetRefs = link.selectedTargets?.targetRefs ?? [];
+
+  for (let index = 0; index < Math.max(targetInstanceIds.length, targetRefs.length); index += 1) {
+    const located = targetInstanceIds[index]
+      ? findCardByInstanceId(nextState, targetInstanceIds[index])
+      : targetRefs[index]
+        ? { card: cardAtRef(nextState, targetRefs[index]), ref: targetRefs[index] }
+        : null;
+
+    if (!located || !located.card || located.ref.zone === "mainDeck") {
+      continue;
+    }
+
+    const destination: ZoneRef = { playerId: located.card.owner, zone: "mainDeck", index: 0 };
+    const removed = removeFromZone(nextState, located.ref);
+    nextState = insertIntoZone(removed.state, destination, removed.card);
+    events.push(
+      createCardMovedEvent(
+        eventBuilder,
+        link.playerId,
+        isZoneCard(located.card) ? toPublicZoneCard(located.card) : toPublicEventCard(located.card),
+        located.ref,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect-return-to-deck-top",
+      ),
+    );
+  }
+
+  return { state: nextState, events };
 }
 
 function applyLpChangeStep(
@@ -1925,6 +3776,58 @@ function applyLpChangeStep(
     state: setPlayerLp(state, playerId, next),
     events: [event],
   };
+}
+
+function applyLpChangeByCountStep(
+  state: DuelState,
+  activatingPlayerId: PlayerId,
+  affectedPlayerId: PlayerId,
+  amountPer: number,
+  countKind: Extract<EffectResolutionStep, { kind: "lp-change-by-count" }>["count"],
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const count = countLpChangeObjects(state, activatingPlayerId, countKind);
+
+  return applyLpChangeStep(state, affectedPlayerId, amountPer * count, eventBuilder);
+}
+
+function countLpChangeObjects(
+  state: DuelState,
+  activatingPlayerId: PlayerId,
+  countKind: Extract<EffectResolutionStep, { kind: "lp-change-by-count" }>["count"],
+): number {
+  const opponent = opponentOf(activatingPlayerId);
+
+  switch (countKind) {
+    case "opponent-graveyard-cards":
+      return state.players[opponent].graveyard.length;
+    case "opponent-banished-cards":
+      return state.players[opponent].banished.length;
+    case "opponent-monsters":
+      return state.players[opponent].monsterZones.filter((card) => card !== null).length;
+    case "opponent-hand-cards":
+      return state.players[opponent].hand.length;
+    case "own-face-up-light-monsters":
+      return state.players[activatingPlayerId].monsterZones.filter((card) => {
+        if (!card || card.face !== "faceUp") {
+          return false;
+        }
+
+        const definition = state.cardDefinitions?.[card.cardId];
+
+        return definition?.kind === "monster" && definition.monster.attribute === "LIGHT";
+      }).length;
+    case "all-monsters-on-field":
+      return (
+        state.players.P1.monsterZones.filter((card) => card !== null).length +
+        state.players.P2.monsterZones.filter((card) => card !== null).length
+      );
+    case "opponent-spell-trap-cards": {
+      const opponentState = state.players[opponent];
+
+      return opponentState.spellTrapZones.filter((card) => card !== null).length + (opponentState.fieldZone ? 1 : 0);
+    }
+  }
 }
 
 function destroyCardAtRef(
@@ -1955,6 +3858,7 @@ function destroyCardAtRef(
     face: "faceUp",
     position: null,
     visibility: "public",
+    ...(destinationZone === "graveyard" ? sentToGraveyardMetadata(state.turn, targetRef) : {}),
   });
   const movedCard = toPublicZoneCard(target);
   const moveReason = destinationZone === "banished" ? "destruction-replacement" : "effect-destruction";
@@ -1962,7 +3866,17 @@ function destroyCardAtRef(
     ...(destinationZone === "graveyard"
       ? [createCardDestroyedEvent(eventBuilder, targetRef.playerId, target, state.turn, "effect")]
       : []),
-    createCardMovedEvent(eventBuilder, targetRef.playerId, movedCard, targetRef, destination, state.turn, moveReason),
+    createCardMovedEvent(
+      eventBuilder,
+      targetRef.playerId,
+      movedCard,
+      targetRef,
+      destination,
+      state.turn,
+      state.phase,
+      state.chain.length,
+      moveReason,
+    ),
   ];
   const linked = handleLinkedCardsOnLeave(nextState, target, eventBuilder);
 
@@ -1973,14 +3887,17 @@ function moveTargetToHand(
   state: DuelState,
   targetRef: ZoneRef,
   eventBuilder: EventBuilder,
+  targetInstanceId?: string,
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
-  const target = cardAtRef(state, targetRef);
+  const located = targetInstanceId ? findCardByInstanceId(state, targetInstanceId) : null;
+  const target = located?.card ?? cardAtRef(state, targetRef);
+  const sourceRef = located?.ref ?? targetRef;
 
-  if (!target || targetRef.zone === "hand") {
+  if (!target || sourceRef.zone === "hand") {
     return { state, events: [] };
   }
 
-  const removed = removeFromZone(state, targetRef);
+  const removed = removeFromZone(state, sourceRef);
   const destination: ZoneRef = {
     playerId: target.owner,
     zone: "hand",
@@ -1991,7 +3908,19 @@ function moveTargetToHand(
 
   return {
     state: nextState,
-    events: [createCardMovedEvent(eventBuilder, targetRef.playerId, eventCard, targetRef, destination, state.turn, "effect")],
+    events: [
+      createCardMovedEvent(
+        eventBuilder,
+        sourceRef.playerId,
+        eventCard,
+        sourceRef,
+        destination,
+        state.turn,
+        state.phase,
+        state.chain.length,
+        "effect",
+      ),
+    ],
   };
 }
 
@@ -2027,12 +3956,48 @@ function handleLinkedCardsOnLeave(
         };
       }
 
+      if (behavior === "detach-linked") {
+        return {
+          state: replaceZoneCardAtRef(resultState.state, located.ref, removeAttachmentFromCard(located.card, leavingCard.instanceId)),
+          events: resultState.events,
+        };
+      }
+
       const destroyed = destroyCardAtRef(resultState.state, located.ref, eventBuilder);
 
       return {
         state: destroyed.state,
         events: [...resultState.events, ...destroyed.events],
       };
+    },
+    { state, events: [] as EngineEvent[] },
+  );
+}
+
+function handleLinkedCardsOnIllegalAttachment(
+  state: DuelState,
+  illegalCard: ZoneCard,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  return illegalCard.attachments.reduce(
+    (resultState, instanceId) => {
+      const located = findCardByInstanceId(resultState.state, instanceId);
+      const behavior = illegalCard.attachmentBehaviors?.[instanceId] ?? "destroy-linked";
+
+      if (!located || !isZoneCard(located.card) || !["spellTrapZone", "fieldZone"].includes(located.ref.zone)) {
+        return resultState;
+      }
+
+      if (behavior === "destroy-linked") {
+        const destroyed = destroyCardAtRef(resultState.state, located.ref, eventBuilder);
+
+        return {
+          state: destroyed.state,
+          events: [...resultState.events, ...destroyed.events],
+        };
+      }
+
+      return resultState;
     },
     { state, events: [] as EngineEvent[] },
   );
@@ -2046,42 +4011,57 @@ function returnControlOfLinkedCardToOwner(
 ): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
   const located = findCardByInstanceId(state, instanceId);
 
+  if (!located || !isZoneCard(located.card)) {
+    return { state, events: [] };
+  }
+
+  return returnControlOfCardToPlayer(state, instanceId, located.card.owner, sourceInstanceId, eventBuilder);
+}
+
+function returnControlOfCardToPlayer(
+  state: DuelState,
+  instanceId: string,
+  returnPlayerId: PlayerId,
+  sourceInstanceId: string | undefined,
+  eventBuilder: EventBuilder,
+): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
+  const located = findCardByInstanceId(state, instanceId);
+
   if (!located || !isZoneCard(located.card) || located.ref.zone !== "monsterZone") {
     return { state, events: [] };
   }
 
-  const owner = located.card.owner;
-  const returnedCard = removeAttachmentFromCard(
-    {
-      ...located.card,
-      controller: owner,
-    },
-    sourceInstanceId,
-  );
+  const returnedCardBase: ZoneCard = {
+    ...located.card,
+    controller: returnPlayerId,
+  };
+  const returnedCard = sourceInstanceId
+    ? removeAttachmentFromCard(returnedCardBase, sourceInstanceId)
+    : returnedCardBase;
 
-  if (located.ref.playerId === owner) {
+  if (located.ref.playerId === returnPlayerId) {
     return {
       state: replaceZoneCardAtRef(state, located.ref, returnedCard),
       events: [],
     };
   }
 
-  const zoneIndex = state.players[owner].monsterZones.findIndex((card) => card === null);
+  const zoneIndex = state.players[returnPlayerId].monsterZones.findIndex((card) => card === null);
 
   if (zoneIndex < 0) {
     return destroyCardAtRef(state, located.ref, eventBuilder);
   }
 
   const source: ZoneRef = located.ref;
-  const destination: ZoneRef = { playerId: owner, zone: "monsterZone", index: zoneIndex };
+  const destination: ZoneRef = { playerId: returnPlayerId, zone: "monsterZone", index: zoneIndex };
   const removed = removeFromZone(state, source);
   const nextState: DuelState = {
     ...removed.state,
     players: {
       ...removed.state.players,
-      [owner]: {
-        ...removed.state.players[owner],
-        monsterZones: replaceArrayIndex(removed.state.players[owner].monsterZones, zoneIndex, returnedCard),
+      [returnPlayerId]: {
+        ...removed.state.players[returnPlayerId],
+        monsterZones: replaceArrayIndex(removed.state.players[returnPlayerId].monsterZones, zoneIndex, returnedCard),
       },
     },
   };
@@ -2091,11 +4071,13 @@ function returnControlOfLinkedCardToOwner(
     events: [
       createCardMovedEvent(
         eventBuilder,
-        owner,
+        returnPlayerId,
         toPublicZoneCard(returnedCard),
         source,
         destination,
         state.turn,
+        state.phase,
+        state.chain.length,
         "control-return",
       ),
     ],
@@ -2125,7 +4107,17 @@ function banishCardByInstanceId(
     : toPublicEventCard(located.card);
   const events: EngineEvent[] = [
     createCardBanishedEvent(eventBuilder, located.ref.playerId, eventCard, state.turn, "effect"),
-    createCardMovedEvent(eventBuilder, located.ref.playerId, eventCard, located.ref, destination, state.turn, "effect-banish"),
+    createCardMovedEvent(
+      eventBuilder,
+      located.ref.playerId,
+      eventCard,
+      located.ref,
+      destination,
+      state.turn,
+      state.phase,
+      state.chain.length,
+      "effect-banish",
+    ),
   ];
 
   return {
@@ -2166,6 +4158,8 @@ function sendSourceToGraveyard(
         source.ref,
         destination,
         state.turn,
+        state.phase,
+        state.chain.length,
         "effect-resolution",
       ),
     ],
@@ -2234,6 +4228,28 @@ function monsterRefsForController(
   return refs;
 }
 
+function controlledFaceUpCardRefsById(state: DuelState, playerId: PlayerId, cardId: string): readonly ZoneRef[] {
+  const refs: ZoneRef[] = [];
+
+  state.players[playerId].monsterZones.forEach((card, index) => {
+    if (card?.cardId === cardId && card.face === "faceUp") {
+      refs.push({ playerId, zone: "monsterZone", index });
+    }
+  });
+
+  state.players[playerId].spellTrapZones.forEach((card, index) => {
+    if (card?.cardId === cardId && card.face === "faceUp") {
+      refs.push({ playerId, zone: "spellTrapZone", index });
+    }
+  });
+
+  if (state.players[playerId].fieldZone?.cardId === cardId && state.players[playerId].fieldZone?.face === "faceUp") {
+    refs.push({ playerId, zone: "fieldZone" });
+  }
+
+  return refs;
+}
+
 function revealActivationSource(state: DuelState, ref: ZoneRef): DuelState {
   if (ref.zone !== "spellTrapZone" && ref.zone !== "fieldZone") {
     return state;
@@ -2290,6 +4306,7 @@ function replaceZoneCardAtRef(state: DuelState, ref: ZoneRef, card: ZoneCard): D
         },
       };
     case "mainDeck":
+    case "fusionDeck":
     case "hand":
     case "graveyard":
     case "banished":
@@ -2357,6 +4374,17 @@ function addAttachment(
   };
 }
 
+function addEffectMarker(card: ZoneCard, effectId: string): ZoneCard {
+  if (card.effectMarkers?.includes(effectId)) {
+    return card;
+  }
+
+  return {
+    ...card,
+    effectMarkers: [...(card.effectMarkers ?? []), effectId],
+  };
+}
+
 function removeAttachmentFromCard(card: ZoneCard, instanceId: string): ZoneCard {
   const attachments = card.attachments.filter((attachment) => attachment !== instanceId);
   const attachmentBehaviors = card.attachmentBehaviors
@@ -2379,6 +4407,8 @@ function cardAtRef(state: DuelState, ref: ZoneRef): CardInstance | ZoneCard | nu
   switch (ref.zone) {
     case "mainDeck":
       return player.mainDeck[ref.index] ?? null;
+    case "fusionDeck":
+      return player.fusionDeck?.[ref.index] ?? null;
     case "hand":
       return player.hand[ref.index] ?? null;
     case "monsterZone":
@@ -2413,11 +4443,11 @@ function applyPendingBattleAtkModifiers(
 ): { readonly atk: number; readonly def: number } {
   const atkDelta = (pending.atkModifiers ?? [])
     .filter((modifier) => modifier.instanceId === instanceId)
-    .reduce((total, modifier) => total + modifier.amount, 0);
+    .reduce((current, modifier) => modifier.setTo ?? current + (modifier.amount ?? 0), stats.atk);
 
   return {
     ...stats,
-    atk: Math.max(0, stats.atk + atkDelta),
+    atk: Math.max(0, atkDelta),
   };
 }
 
@@ -2458,13 +4488,13 @@ function resolvePendingAttack(
     return { state: nextState, events: [] };
   }
 
-  const attackerBaseStats = getMonsterBattleStats(nextState.cardDefinitions?.[attacker.cardId]);
+  const attackerBaseStats = getBattleStatsForZoneCard(nextState, attacker);
 
   if (!attackerBaseStats) {
     return { state: nextState, events: [] };
   }
 
-  const attackerStats = deriveBattleStats(nextState, {
+  const attackerStats = deriveBattleStats({ ...nextState, pendingAttack: pending }, {
     playerId: pending.attackerPlayerId,
     card: attacker,
     base: attackerBaseStats,
@@ -2486,7 +4516,7 @@ function resolvePendingAttack(
     };
   }
 
-  const defenderBaseStats = getMonsterBattleStats(nextState.cardDefinitions?.[defender.cardId]);
+  const defenderBaseStats = getBattleStatsForZoneCard(nextState, defender);
 
   if (!defenderBaseStats || !defenderLocation || defenderLocation.ref.zone !== "monsterZone") {
     return { state: { ...nextState, damageStep: closeDamageStep() }, events };
@@ -2501,7 +4531,19 @@ function resolvePendingAttack(
 
   nextState = setMonsterZone(nextState, pending.defenderPlayerId, defenderIndex, revealedDefender);
 
-  const defenderStats = deriveBattleStats(nextState, {
+  if (defender.face === "faceDown") {
+    events.push(createMonsterFlippedFaceUpEvent(
+      eventBuilder,
+      pending.defenderPlayerId,
+      revealedDefender,
+      defenderIndex,
+      "battle",
+      state.turn,
+    ));
+  }
+
+  const stateWithPendingAttack = { ...nextState, pendingAttack: pending };
+  const defenderStats = deriveBattleStats(stateWithPendingAttack, {
     playerId: pending.defenderPlayerId,
     card: revealedDefender,
     base: defenderBaseStats,
@@ -2510,7 +4552,7 @@ function resolvePendingAttack(
   const outcome = resolveMonsterBattle(modifiedAttackerStats, modifiedDefenderStats, revealedDefender.position);
   const piercingDamage = revealedDefender.position === "defense" &&
     modifiedAttackerStats.atk > modifiedDefenderStats.def &&
-    hasPiercingDamage(nextState, { playerId: pending.attackerPlayerId, card: attacker })
+    hasPiercingDamage(stateWithPendingAttack, { playerId: pending.attackerPlayerId, card: attacker })
       ? modifiedAttackerStats.atk - modifiedDefenderStats.def
       : 0;
   const battleCompleted = createBattleCompletedEvent(
@@ -2571,6 +4613,7 @@ function createPlayer(
   shuffleDeck: boolean,
 ): { readonly player: PlayerState; readonly rng: RngState } {
   const instances = createDeckInstances(playerId, deck.main);
+  const fusionDeck = createDeckInstances(playerId, deck.extra ?? [], "fusion");
   const shuffled = shuffleDeck ? shuffleWithRng(instances, rng) : { items: instances, rng };
   const hand = shuffled.items.slice(0, OPENING_HAND_SIZE);
   const mainDeck = shuffled.items.slice(OPENING_HAND_SIZE);
@@ -2580,6 +4623,7 @@ function createPlayer(
       id: playerId,
       lp: STARTING_LIFE_POINTS,
       mainDeck,
+      fusionDeck,
       hand,
       monsterZones: emptyZones(),
       spellTrapZones: emptyZones(),
@@ -2593,7 +4637,7 @@ function createPlayer(
   };
 }
 
-function createDeckInstances(playerId: PlayerId, mainDeck: readonly string[]): CardInstance[] {
+function createDeckInstances(playerId: PlayerId, mainDeck: readonly string[], zonePrefix?: string): CardInstance[] {
   const copyCounts = new Map<string, number>();
 
   return mainDeck.map((cardId) => {
@@ -2601,7 +4645,9 @@ function createDeckInstances(playerId: PlayerId, mainDeck: readonly string[]): C
     copyCounts.set(cardId, copyNumber);
 
     return {
-      instanceId: `${playerId}-${cardId}-${copyNumber}`,
+      instanceId: zonePrefix
+        ? `${playerId}-${zonePrefix}-${cardId}-${copyNumber}`
+        : `${playerId}-${cardId}-${copyNumber}`,
       cardId,
       owner: playerId,
       controller: playerId,
@@ -2682,12 +4728,10 @@ function validateTurnCommand(
   state: DuelState,
   command: Extract<EngineCommand, { playerId: PlayerId }>,
 ): EngineResult | null {
-  if (!isPlayerId(command.playerId)) {
-    return illegalResult(state, command, `Unknown player: ${command.playerId}.`, command.playerId);
-  }
+  const preflight = validatePlayerCommand(state, command);
 
-  if (isDuelFinished(state)) {
-    return illegalResult(state, command, "The duel is already over.", command.playerId);
+  if (preflight) {
+    return preflight;
   }
 
   if (state.activePlayer !== command.playerId) {
@@ -2699,6 +4743,161 @@ function validateTurnCommand(
   }
 
   return null;
+}
+
+function validateNoPendingPhaseProcedure(state: DuelState): string | null {
+  if (state.pendingPromptIds.length > 0) {
+    return "Pending phase procedure prompts must be answered before changing phases.";
+  }
+
+  if (state.chain.length > 0) {
+    return "Pending chain links must be resolved before changing phases.";
+  }
+
+  return null;
+}
+
+function validatePlayerCommand(
+  state: DuelState,
+  command: Extract<EngineCommand, { playerId: PlayerId }>,
+): EngineResult | null {
+  if (!isPlayerId(command.playerId)) {
+    return illegalResult(state, command, `Unknown player: ${command.playerId}.`, command.playerId);
+  }
+
+  if (isDuelFinished(state)) {
+    return illegalResult(state, command, "The duel is already over.", command.playerId);
+  }
+
+  return null;
+}
+
+function validateActivationWindow(
+  state: DuelState,
+  effect: EffectDefinition,
+  playerId: PlayerId,
+): string | null {
+  if (effect.kind === "quick") {
+    if (state.priority.status !== "open" || state.priority.holder !== playerId) {
+      return "Quick effects can only be activated while that player holds an open priority window.";
+    }
+
+    return null;
+  }
+
+  if (state.activePlayer !== playerId) {
+    return `It is not ${playerId}'s turn.`;
+  }
+
+  if (state.priority.status === "open" && state.priority.holder !== playerId) {
+    return `${state.priority.holder} currently holds priority.`;
+  }
+
+  return null;
+}
+
+function validateIgnitionActivation(
+  state: DuelState,
+  effect: EffectDefinition,
+  playerId: PlayerId,
+): string | null {
+  if (effect.kind !== "ignition") {
+    return null;
+  }
+
+  if (!isMainPhase(state.phase)) {
+    return "Ignition effects can only be activated during Main Phase 1 or Main Phase 2.";
+  }
+
+  if (state.priority.status !== "open" || state.priority.holder !== playerId) {
+    return "Ignition effects can only be activated while that player holds an open priority window.";
+  }
+
+  if (state.pendingPromptIds.length > 0) {
+    return "Ignition effects cannot be activated while a prompt is pending.";
+  }
+
+  if (state.pendingAttack) {
+    return "Ignition effects cannot be activated while an attack is pending.";
+  }
+
+  return null;
+}
+
+function validateOncePerTurnUsage(
+  state: DuelState,
+  playerId: PlayerId,
+  cardId: string,
+  sourceInstanceId: string,
+  effect: EffectDefinition,
+): string | null {
+  if (!effect.oncePerTurn) {
+    return null;
+  }
+
+  const usage = state.effectUsage?.[oncePerTurnKey(playerId, cardId, sourceInstanceId, effect)];
+
+  if (usage && effect.oncePerTurn.frequency === "duel") {
+    return "That effect has already been activated this Duel.";
+  }
+
+  if (usage?.turn === state.turn) {
+    return "That effect has already been activated this turn.";
+  }
+
+  return null;
+}
+
+function markOncePerTurnUsage(
+  state: DuelState,
+  playerId: PlayerId,
+  cardId: string,
+  sourceInstanceId: string,
+  effect: EffectDefinition,
+): DuelState {
+  if (!effect.oncePerTurn) {
+    return state;
+  }
+
+  const key = oncePerTurnKey(playerId, cardId, sourceInstanceId, effect);
+
+  return {
+    ...state,
+    effectUsage: {
+      ...(state.effectUsage ?? {}),
+      [key]: {
+        turn: state.turn,
+        playerId,
+        cardId,
+        effectId: effect.id,
+        sourceInstanceId,
+        key,
+        frequency: effect.oncePerTurn.frequency ?? "turn",
+        scope: effect.oncePerTurn.scope ?? "source",
+      },
+    },
+  };
+}
+
+function oncePerTurnKey(
+  playerId: PlayerId,
+  cardId: string,
+  sourceInstanceId: string,
+  effect: EffectDefinition,
+): string {
+  const scope = effect.oncePerTurn?.scope ?? "source";
+  const baseKey = effect.oncePerTurn?.key ?? `${cardId}:${effect.id}`;
+
+  switch (scope) {
+    case "card":
+      return `${playerId}:card:${baseKey}`;
+    case "effect":
+      return `${playerId}:effect:${baseKey}`;
+    case "duel":
+      return `duel:${baseKey}`;
+    case "source":
+      return `${playerId}:source:${sourceInstanceId}:${baseKey}`;
+  }
 }
 
 function validatePromptCommand(
@@ -3272,6 +5471,8 @@ function createCardMovedEvent(
   from: ZoneRef,
   to: ZoneRef,
   turn: number,
+  phase: DuelState["phase"],
+  chainDepth: number,
   reason: string,
 ): CardMovedEvent {
   return {
@@ -3281,10 +5482,16 @@ function createCardMovedEvent(
     playerId,
     instanceId: card.instanceId,
     cardId: card.cardId,
+    owner: card.owner,
+    controller: card.controller,
     from,
     to,
+    visibility: card.visibility,
+    reason,
+    phase,
+    chainDepth,
     turn,
-    metadata: { reason },
+    metadata: { reason, phase, chainDepth },
   };
 }
 
@@ -3377,6 +5584,7 @@ function eventCostKind(paidCost: PaidCost): CostPaidEvent["costKind"] {
     case "discard":
       return "discard";
     case "tribute":
+    case "tribute-matching-face-up-card":
     case "tribute-source":
       return "tribute";
     case "banish-from-graveyard":
@@ -3387,6 +5595,7 @@ function eventCostKind(paidCost: PaidCost): CostPaidEvent["costKind"] {
     case "remove-counter-from-source":
     case "send-to-graveyard":
     case "reveal":
+    case "return-to-hand":
       return "other";
   }
 }
@@ -3509,6 +5718,27 @@ function createSummonSuccessfulEvent(
   };
 }
 
+function createMonsterFlippedFaceUpEvent(
+  builder: EventBuilder,
+  playerId: PlayerId,
+  card: ZoneCard,
+  zoneIndex: number,
+  reason: MonsterFlippedFaceUpEvent["reason"],
+  turn: number,
+): MonsterFlippedFaceUpEvent {
+  return {
+    id: builder.nextId(),
+    type: "monster-flipped-face-up",
+    message: `${playerId}'s monster was flipped face-up.`,
+    playerId,
+    instanceId: card.instanceId,
+    cardId: card.cardId,
+    zone: { playerId, zone: "monsterZone", index: zoneIndex },
+    reason,
+    turn,
+  };
+}
+
 function createMonsterSetEvent(
   builder: EventBuilder,
   playerId: PlayerId,
@@ -3596,6 +5826,7 @@ function createHandSizeDiscardEvent(
   playerId: PlayerId,
   discard: HandSizeDiscard,
   turn: number,
+  phase: DuelState["phase"],
 ): CardMovedEvent {
   return {
     id: builder.nextId(),
@@ -3604,10 +5835,16 @@ function createHandSizeDiscardEvent(
     playerId,
     instanceId: discard.card.instanceId,
     cardId: discard.card.cardId,
+    owner: discard.card.owner,
+    controller: discard.card.controller,
     from: { playerId, zone: "hand", index: discard.fromHandIndex },
     to: { playerId, zone: "graveyard", index: discard.toGraveyardIndex },
+    visibility: "public",
+    reason: "hand-size-discard",
+    phase,
+    chainDepth: 0,
     turn,
-    metadata: { reason: "hand-size-discard" },
+    metadata: { reason: "hand-size-discard", phase, chainDepth: 0 },
   };
 }
 
@@ -3890,7 +6127,9 @@ function destroyMonster(
         ...playersWithoutMonster,
         [destinationPlayerId]: {
           ...playersWithoutMonster[destinationPlayerId],
-          banished: [banishedCard, ...playersWithoutMonster[destinationPlayerId].banished],
+          banished: card.token
+            ? playersWithoutMonster[destinationPlayerId].banished
+            : [banishedCard, ...playersWithoutMonster[destinationPlayerId].banished],
         },
       },
     });
@@ -3902,6 +6141,8 @@ function destroyMonster(
         { playerId, zone: "monsterZone", index: zoneIndex },
         { playerId: destinationPlayerId, zone: "banished", index: 0 },
         turn,
+        state.phase,
+        state.chain.length,
         "destruction-replacement",
       ),
     ];
@@ -3931,7 +6172,9 @@ function destroyMonster(
       ...playersWithoutMonster,
       [destinationPlayerId]: {
         ...playersWithoutMonster[destinationPlayerId],
-        graveyard: [destroyedCard, ...playersWithoutMonster[destinationPlayerId].graveyard],
+        graveyard: card.token
+          ? playersWithoutMonster[destinationPlayerId].graveyard
+          : [destroyedCard, ...playersWithoutMonster[destinationPlayerId].graveyard],
       },
     },
   });
@@ -3944,6 +6187,8 @@ function destroyMonster(
       { playerId, zone: "monsterZone", index: zoneIndex },
       { playerId: destinationPlayerId, zone: "graveyard", index: 0 },
       turn,
+      state.phase,
+      state.chain.length,
       "battle-destruction",
     ),
   ];
@@ -3959,7 +6204,12 @@ function buildDuelCardDefinitions(
   cards: readonly CardRecord[],
   decks: Readonly<Record<PlayerId, DeckList>>,
 ): Readonly<Record<string, CardDefinition>> {
-  const cardIds = new Set([...decks.P1.main, ...decks.P2.main]);
+  const cardIds = new Set([
+    ...decks.P1.main,
+    ...(decks.P1.extra ?? []),
+    ...decks.P2.main,
+    ...(decks.P2.extra ?? []),
+  ]);
   const definitions: Record<string, CardDefinition> = {};
 
   for (const card of cards) {

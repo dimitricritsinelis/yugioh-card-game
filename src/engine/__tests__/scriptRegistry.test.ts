@@ -77,6 +77,7 @@ describe("card script registry", () => {
     expect(getCardScript(CARD_SCRIPTS, MAGICIAN_OF_FAITH_ID)).toBeDefined();
     expect(getCardScript(CARD_SCRIPTS, OLD_VINDICTIVE_MAGICIAN_ID)).toBeDefined();
     expect(getCardScript(CARD_SCRIPTS, EXILED_FORCE_ID)).toBeDefined();
+    expect(getCardScript(CARD_SCRIPTS, MYSTIC_TOMATO_ID)).toBeDefined();
     expect(getCardScript(CARD_SCRIPTS, BREAKER_THE_MAGICAL_WARRIOR_ID)).toBeDefined();
     expect(getCardScript(CARD_SCRIPTS, TRIBE_INFECTING_VIRUS_ID)).toBeDefined();
     expect(getCardScript(CARD_SCRIPTS, SINISTER_SERPENT_ID)).toBeDefined();
@@ -91,7 +92,6 @@ describe("card script registry", () => {
     expect(getCardScript(CARD_SCRIPTS, GRACEFUL_CHARITY_ID)).toBeUndefined();
     expect(getCardScript(CARD_SCRIPTS, WABOKU_ID)).toBeUndefined();
     expect(getCardScript(CARD_SCRIPTS, SANGAN_ID)).toBeUndefined();
-    expect(getCardScript(CARD_SCRIPTS, MYSTIC_TOMATO_ID)).toBeUndefined();
     expect(ENGINE_CARD_COVERAGE[POT_OF_GREED_ID]).toBe("goatTemplate");
     expect(ENGINE_CARD_COVERAGE[BOOK_OF_MOON_ID]).toBe("goatTemplate");
     expect(ENGINE_CARD_COVERAGE[MIRROR_FORCE_ID]).toBe("goatTemplate");
@@ -100,6 +100,7 @@ describe("card script registry", () => {
     expect(ENGINE_CARD_COVERAGE[MAGICIAN_OF_FAITH_ID]).toBe("goatTemplate");
     expect(ENGINE_CARD_COVERAGE[OLD_VINDICTIVE_MAGICIAN_ID]).toBe("goatTemplate");
     expect(ENGINE_CARD_COVERAGE[EXILED_FORCE_ID]).toBe("goatTemplate");
+    expect(ENGINE_CARD_COVERAGE[MYSTIC_TOMATO_ID]).toBe("goatTemplate");
     expect(ENGINE_CARD_COVERAGE[BREAKER_THE_MAGICAL_WARRIOR_ID]).toBe("goatCustom");
     expect(ENGINE_CARD_COVERAGE[TRIBE_INFECTING_VIRUS_ID]).toBe("goatCustom");
     expect(ENGINE_CARD_COVERAGE[SINISTER_SERPENT_ID]).toBe("goatCustom");
@@ -114,6 +115,5 @@ describe("card script registry", () => {
     expect(ENGINE_CARD_COVERAGE[GRACEFUL_CHARITY_ID]).toBeUndefined();
     expect(ENGINE_CARD_COVERAGE[WABOKU_ID]).toBeUndefined();
     expect(ENGINE_CARD_COVERAGE[SANGAN_ID]).toBeUndefined();
-    expect(ENGINE_CARD_COVERAGE[MYSTIC_TOMATO_ID]).toBeUndefined();
   });
 });

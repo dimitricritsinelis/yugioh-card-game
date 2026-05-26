@@ -8,7 +8,7 @@ import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
 import { deriveBattleStats, type ContinuousEffectDefinition } from "../effects/continuous";
 import type { ActiveLingeringEffect, LingeringEffectDefinition } from "../effects/lingering";
-import type { ReplacementEffectDefinition } from "../effects/replacement";
+import { findDestructionReplacement, findReplacementEffect, type ReplacementEffectDefinition } from "../effects/replacement";
 import { createDuel, reduceDuel } from "../reducer";
 import { getMonsterBattleStats } from "../rules/battle";
 import { applyStateBasedCleanup } from "../rules/stateBasedCleanup";
@@ -80,6 +80,65 @@ describe("continuous, replacement, and lingering effect foundations", () => {
     expect(result.state.players.P1.monsterZones[0]?.attackedTurn).toBeNull();
   });
 
+  it("recalculates overlapping continuous modifiers when a source leaves the field", () => {
+    const base = battleState([
+      script(CONTINUOUS_SOURCE_ID, "own-boost", "continuous", {
+        continuous: {
+          statModifiers: [
+            {
+              stat: "atk",
+              amount: 600,
+              target: { controller: "own", face: "faceUp" },
+            },
+          ],
+        },
+      }),
+      script(REPLACEMENT_SOURCE_ID, "own-penalty", "continuous", {
+        continuous: {
+          statModifiers: [
+            {
+              stat: "atk",
+              amount: -200,
+              target: { controller: "own", face: "faceUp" },
+            },
+          ],
+        },
+      }),
+    ], {
+      attackerId: ATTACKER_ID,
+      p1SpellTrap: zoneCard("p1-boost-source", CONTINUOUS_SOURCE_ID, "P1"),
+    });
+    const withTwoSources: DuelState = {
+      ...base,
+      players: {
+        ...base.players,
+        P1: {
+          ...base.players.P1,
+          spellTrapZones: [
+            base.players.P1.spellTrapZones[0],
+            zoneCard("p1-penalty-source", REPLACEMENT_SOURCE_ID, "P1"),
+            null,
+            null,
+            null,
+          ],
+        },
+      },
+    };
+    const afterPenaltyLeaves: DuelState = {
+      ...withTwoSources,
+      players: {
+        ...withTwoSources.players,
+        P1: {
+          ...withTwoSources.players.P1,
+          spellTrapZones: [withTwoSources.players.P1.spellTrapZones[0], null, null, null, null],
+        },
+      },
+    };
+
+    expect(derivedAtk(withTwoSources, "P1", 0)).toBe(2100);
+    expect(derivedAtk(afterPenaltyLeaves, "P1", 0)).toBe(2300);
+  });
+
   it("prevents battle destruction through replacement effects", () => {
     const state = battleState([
       script(REPLACEMENT_SOURCE_ID, "protect-own-monsters", "replacement", {
@@ -110,6 +169,150 @@ describe("continuous, replacement, and lingering effect foundations", () => {
     expect(result.state.players.P2.monsterZones[0]).toMatchObject({ instanceId: defender.instanceId });
     expect(result.state.players.P2.graveyard).toEqual([]);
     expect(result.events.map((event) => event.type)).toEqual(["attack-declared", "battle-completed"]);
+  });
+
+  it("offers competing replacements in deterministic board order", () => {
+    const target = zoneCard("p2-defender", DEFENDER_ID, "P2");
+    const state = battleState([
+      script(CONTINUOUS_SOURCE_ID, "monster-source-prevent", "replacement", {
+        replacement: {
+          destruction: {
+            target: { controller: "own", face: "faceUp" },
+            reasons: ["effect"],
+            action: "prevent",
+          },
+        },
+      }),
+      script(REPLACEMENT_SOURCE_ID, "spell-source-banish", "replacement", {
+        replacement: {
+          destruction: {
+            target: { controller: "own", face: "faceUp" },
+            reasons: ["effect"],
+            action: "banish-instead",
+          },
+        },
+      }),
+    ], {
+      attackerId: ATTACKER_ID,
+      p2SpellTrap: zoneCard("p2-spell-replacement-source", REPLACEMENT_SOURCE_ID, "P2"),
+    });
+    const withCompetingSources: DuelState = {
+      ...state,
+      players: {
+        ...state.players,
+        P2: {
+          ...state.players.P2,
+          monsterZones: [zoneCard("p2-monster-replacement-source", CONTINUOUS_SOURCE_ID, "P2"), target, null, null, null],
+        },
+      },
+    };
+
+    expect(findDestructionReplacement(withCompetingSources, {
+      playerId: "P2",
+      card: target,
+      reason: "effect",
+    })).toMatchObject({
+      replaced: true,
+      action: "prevent",
+      sourceInstanceId: "p2-monster-replacement-source",
+    });
+  });
+
+  it("exposes prevention hooks for damage, movement, draw, discard, and attack events", () => {
+    const target = zoneCard("p1-target", ATTACKER_ID, "P1");
+    const state = mainPhaseState([
+      script(REPLACEMENT_SOURCE_ID, "broad-prevention", "replacement", {
+        replacement: {
+          prevention: [
+            { kind: "damage", target: { controller: "own" }, reasons: ["battle"], action: "prevent" },
+            { kind: "send-to-graveyard", target: { controller: "own", face: "faceUp" }, action: "prevent" },
+            { kind: "banish", target: { controller: "own", face: "faceUp" }, action: "prevent" },
+            { kind: "draw", target: { controller: "own" }, action: "prevent" },
+            { kind: "discard", target: { controller: "own", face: "faceUp" }, action: "prevent" },
+            { kind: "attack", target: { controller: "own", face: "faceUp" }, action: "prevent" },
+          ],
+        },
+      }),
+    ], [ATTACKER_ID]);
+    const withSource: DuelState = {
+      ...state,
+      players: {
+        ...state.players,
+        P1: {
+          ...state.players.P1,
+          monsterZones: [target, zoneCard("p1-prevention-source", REPLACEMENT_SOURCE_ID, "P1"), null, null, null],
+        },
+      },
+    };
+
+    expect(findReplacementEffect(withSource, { kind: "damage", playerId: "P1", reason: "battle" })).toMatchObject({
+      replaced: true,
+      sourceInstanceId: "p1-prevention-source",
+    });
+    for (const kind of ["send-to-graveyard", "banish", "discard", "attack"] as const) {
+      expect(findReplacementEffect(withSource, { kind, playerId: "P1", card: target })).toMatchObject({
+        replaced: true,
+        sourceInstanceId: "p1-prevention-source",
+      });
+    }
+    expect(findReplacementEffect(withSource, { kind: "draw", playerId: "P1" })).toMatchObject({
+      replaced: true,
+      sourceInstanceId: "p1-prevention-source",
+    });
+  });
+
+  it("expires prevention when the replacement source leaves active face-up field state", () => {
+    const target = zoneCard("p1-target", ATTACKER_ID, "P1");
+    const state = mainPhaseState([
+      script(REPLACEMENT_SOURCE_ID, "attack-prevention", "replacement", {
+        replacement: {
+          prevention: [
+            { kind: "attack", target: { controller: "own", face: "faceUp" }, action: "prevent" },
+          ],
+        },
+      }),
+    ], [ATTACKER_ID]);
+    const activeSource = zoneCard("p1-prevention-source", REPLACEMENT_SOURCE_ID, "P1");
+    const withActiveSource: DuelState = {
+      ...state,
+      players: {
+        ...state.players,
+        P1: {
+          ...state.players.P1,
+          monsterZones: [target, activeSource, null, null, null],
+        },
+      },
+    };
+    const withFaceDownSource: DuelState = {
+      ...withActiveSource,
+      players: {
+        ...withActiveSource.players,
+        P1: {
+          ...withActiveSource.players.P1,
+          monsterZones: [
+            target,
+            { ...activeSource, face: "faceDown", visibility: "hidden" },
+            null,
+            null,
+            null,
+          ],
+        },
+      },
+    };
+    const withoutSource: DuelState = {
+      ...withActiveSource,
+      players: {
+        ...withActiveSource.players,
+        P1: {
+          ...withActiveSource.players.P1,
+          monsterZones: [target, null, null, null, null],
+        },
+      },
+    };
+
+    expect(findReplacementEffect(withActiveSource, { kind: "attack", playerId: "P1", card: target }).replaced).toBe(true);
+    expect(findReplacementEffect(withFaceDownSource, { kind: "attack", playerId: "P1", card: target }).replaced).toBe(false);
+    expect(findReplacementEffect(withoutSource, { kind: "attack", playerId: "P1", card: target }).replaced).toBe(false);
   });
 
   it("applies lingering modifiers on chain resolution and expires them at the End Phase", () => {
@@ -193,6 +396,38 @@ describe("continuous, replacement, and lingering effect foundations", () => {
 
     expect(cleanedWithSource.lingeringEffects).toEqual([effect]);
     expect(applyStateBasedCleanup(withoutSource).lingeringEffects).toEqual([]);
+  });
+
+  it("treats source zone changes as field-leaves cleanup only when the lingering effect requests it", () => {
+    const source = zoneCard("p1-lingering-source", LINGERING_SOURCE_ID, "P1");
+    const detachedEffect = activeLingering({
+      id: "detached-source-effect",
+      sourceInstanceId: source.instanceId,
+      sourceCardId: source.cardId,
+      removeWhenSourceLeavesField: false,
+    });
+    const attachedEffect = activeLingering({
+      id: "attached-source-effect",
+      sourceInstanceId: source.instanceId,
+      sourceCardId: source.cardId,
+      removeWhenSourceLeavesField: true,
+    });
+    const base = mainPhaseState([], [ATTACKER_ID]);
+    const movedToGraveyard: DuelState = {
+      ...base,
+      lingeringEffects: [detachedEffect, attachedEffect],
+      players: {
+        ...base.players,
+        P1: {
+          ...base.players.P1,
+          monsterZones: [null, null, null, null, null],
+          graveyard: [source],
+        },
+      },
+    };
+    const cleaned = applyStateBasedCleanup(movedToGraveyard);
+
+    expect(cleaned.lingeringEffects).toEqual([detachedEffect]);
   });
 });
 
@@ -301,12 +536,13 @@ function script(
 }
 
 function activeLingering(input: {
+  readonly id?: string;
   readonly sourceInstanceId: string;
   readonly sourceCardId: string;
   readonly removeWhenSourceLeavesField: boolean;
 }): ActiveLingeringEffect {
   return {
-    id: "lingering-test",
+    id: input.id ?? "lingering-test",
     playerId: "P1",
     sourceInstanceId: input.sourceInstanceId,
     sourceCardId: input.sourceCardId,

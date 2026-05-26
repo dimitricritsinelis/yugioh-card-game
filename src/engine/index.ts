@@ -74,7 +74,7 @@ export {
 } from "./effects/continuous";
 export { payCosts } from "./effects/costs";
 export { addLingeringEffect, expireLingeringEffectsForEndPhase } from "./effects/lingering";
-export { findDestructionReplacement } from "./effects/replacement";
+export { findDestructionReplacement, findReplacementEffect } from "./effects/replacement";
 export { validateStoredTargets, validateTargetSelection } from "./effects/targets";
 export { createPrompt, createTargetPrompt } from "./prompts/prompt";
 export { validatePromptAnswer, validateSelectionCount } from "./prompts/selection";
@@ -218,7 +218,13 @@ export type {
   DestructionReplacementInput,
   DestructionReplacementResult,
   DestructionReplacementSpec,
+  PreventionReplacementKind,
+  PreventionReplacementSpec,
+  ReplacementAction,
   ReplacementEffectDefinition,
+  ReplacementInput,
+  ReplacementKind,
+  ReplacementResult,
 } from "./effects/replacement";
 export type {
   CardTargetSpec,

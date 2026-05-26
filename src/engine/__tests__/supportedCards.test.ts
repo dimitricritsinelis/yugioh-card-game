@@ -79,6 +79,7 @@ describe("initial supported playable card pool", () => {
       MAGICIAN_OF_FAITH_ID,
       OLD_VINDICTIVE_MAGICIAN_ID,
       EXILED_FORCE_ID,
+      MYSTIC_TOMATO_ID,
     ]) {
       expect(supported.has(cardId)).toBe(true);
       expect(getCardCoverage(cardById(cardId)).status).toBe("goatTemplate");
@@ -106,7 +107,6 @@ describe("initial supported playable card pool", () => {
       GRACEFUL_CHARITY_ID,
       WABOKU_ID,
       SANGAN_ID,
-      MYSTIC_TOMATO_ID,
       THOUSAND_EYES_RESTRICT_ID,
     ]) {
       expect(supported.has(cardId)).toBe(false);

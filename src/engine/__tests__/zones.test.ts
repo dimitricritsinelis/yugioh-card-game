@@ -64,6 +64,27 @@ describe("core zone operations", () => {
     });
   });
 
+  it("moves Fusion Deck cards through the same zone pipeline", () => {
+    const state = deepFreeze(makeState());
+    const moved = moveCard(
+      state,
+      { playerId: "P1", zone: "fusionDeck", index: 0 },
+      { playerId: "P1", zone: "monsterZone", index: 1 },
+      { face: "faceUp", position: "attack", visibility: "public" },
+    );
+
+    expect(findCardByInstanceId(state, "p1-fusion-a")).toMatchObject({
+      ref: { playerId: "P1", zone: "fusionDeck", index: 0 },
+    });
+    expect(moved.players.P1.fusionDeck).toHaveLength(0);
+    expect(moved.players.P1.monsterZones[1]).toMatchObject({
+      instanceId: "p1-fusion-a",
+      face: "faceUp",
+      position: "attack",
+      visibility: "public",
+    });
+  });
+
   it("updates face state and monster position immutably", () => {
     const state = deepFreeze(makeState());
     const revealed = revealCard(state, { playerId: "P1", zone: "spellTrapZone", index: 0 });
@@ -129,6 +150,7 @@ function makeState(): CoreDuelState {
     players: {
       P1: makePlayer("P1", {
         mainDeck: [cardInstance("p1-deck-a", "003", "P1")],
+        fusionDeck: [cardInstance("p1-fusion-a", "005", "P1")],
         hand: [cardInstance("p1-hand-a", "001", "P1")],
         monsterZones: [zoneCard("p1-monster-a", "002", "P1"), null, null, null, null],
         spellTrapZones: [zoneCard("p1-spell-a", "004", "P1", { face: "faceDown", visibility: "hidden" }), null, null, null, null],
@@ -148,6 +170,7 @@ function makePlayer(playerId: "P1" | "P2", overrides: Partial<CorePlayerState> =
     id: playerId,
     lp: 8000,
     mainDeck: [],
+    fusionDeck: [],
     hand: [],
     monsterZones: [null, null, null, null, null],
     spellTrapZones: [null, null, null, null, null],

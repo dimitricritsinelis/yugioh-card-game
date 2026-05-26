@@ -154,6 +154,34 @@ describe("Monster templates", () => {
     expect(resolved.state.players.P2.monsterZones[0]).toMatchObject({ cardId: BATTLE_OX_ID });
   });
 
+  it("special summons from Deck by structured monster filters", () => {
+    const state = withRecruitTargetsInDeck(
+      battleStateWithDefenderScript(createBattleRecruiterScript({
+        cardId: MYSTIC_TOMATO_ID,
+        recruitMonsterFilter: {
+          attribute: "WATER",
+          maxAtk: 1500,
+          excludeClassifications: ["Fusion", "Ritual"],
+        },
+      }), MYSTIC_TOMATO_ID),
+      "P2",
+      [BATTLE_OX_ID, AQUA_MADOOR_ID],
+    );
+    const attacker = state.players.P1.monsterZones[0]!;
+    const defender = state.players.P2.monsterZones[0]!;
+    const battle = reduceDuel(state, {
+      type: "attack",
+      playerId: "P1",
+      attackerInstanceId: attacker.instanceId,
+      defenderInstanceId: defender.instanceId,
+    });
+    const resolved = reduceDuel(battle.state, { type: "resolve-chain", playerId: "P1" });
+
+    expect(resolved.errors).toEqual([]);
+    expect(resolved.state.players.P2.monsterZones[0]).toMatchObject({ cardId: AQUA_MADOOR_ID });
+    expect(resolved.state.players.P2.mainDeck[0]).toMatchObject({ cardId: BATTLE_OX_ID });
+  });
+
   it("searches Deck to hand when sent from field to Graveyard", () => {
     const state = withRecruitTargetInDeck(
       battleStateWithDefenderScript(createSentToGraveyardSearcherScript({
@@ -390,13 +418,20 @@ function battleStateWithAttackerScript(
 }
 
 function withRecruitTargetInDeck(state: DuelState, playerId: "P1" | "P2", cardId: string): DuelState {
+  return withRecruitTargetsInDeck(state, playerId, [cardId]);
+}
+
+function withRecruitTargetsInDeck(state: DuelState, playerId: "P1" | "P2", cardIds: readonly string[]): DuelState {
   return {
     ...state,
     players: {
       ...state.players,
       [playerId]: {
         ...state.players[playerId],
-        mainDeck: [cardInstance(`${playerId}-${cardId}-deck-target`, cardId, playerId), ...state.players[playerId].mainDeck],
+        mainDeck: [
+          ...cardIds.map((cardId, index) => cardInstance(`${playerId}-${cardId}-deck-target-${index}`, cardId, playerId)),
+          ...state.players[playerId].mainDeck,
+        ],
       },
     },
   };

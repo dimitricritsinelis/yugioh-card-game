@@ -18,6 +18,7 @@ const TRIBUTE_ID = "89631139";
 const SEND_ID = "27125110";
 const BANISH_ID = "47372349";
 const REVEAL_ID = "23771716";
+const RETURN_ID = "46986414";
 
 describe("effect costs", () => {
   it("supports all core cost kinds without mutating the input state", () => {
@@ -31,13 +32,14 @@ describe("effect costs", () => {
       position: null,
       visibility: "hidden",
     });
+    const returnCost = zoneCard("return-source", RETURN_ID, "P2", { controller: "P1" });
     const withCostCards: DuelState = {
       ...base,
       players: {
         ...base.players,
         P1: {
           ...base.players.P1,
-          monsterZones: [tribute, null, null, null, null],
+          monsterZones: [tribute, returnCost, null, null, null],
           spellTrapZones: [send, reveal, null, null, null],
           graveyard: [banish],
         },
@@ -53,6 +55,7 @@ describe("effect costs", () => {
       { kind: "send-to-graveyard", count: 1 },
       { kind: "banish-from-graveyard", count: 1 },
       { kind: "reveal", count: 1 },
+      { kind: "return-to-hand", count: 1 },
     ], {
       instanceIds: [
         discard.instanceId,
@@ -60,6 +63,7 @@ describe("effect costs", () => {
         send.instanceId,
         banish.instanceId,
         reveal.instanceId,
+        returnCost.instanceId,
       ],
     });
 
@@ -68,7 +72,9 @@ describe("effect costs", () => {
     expect(result.state.players.P1.lp).toBe(7500);
     expect(result.state.players.P1.hand.some((card) => card.instanceId === discard.instanceId)).toBe(false);
     expect(result.state.players.P1.monsterZones[0]).toBeNull();
+    expect(result.state.players.P1.monsterZones[1]).toBeNull();
     expect(result.state.players.P1.spellTrapZones[0]).toBeNull();
+    expect(result.state.players.P2.hand.at(-1)).toMatchObject({ instanceId: returnCost.instanceId });
     expect(result.state.players.P1.banished[0]).toMatchObject({ instanceId: banish.instanceId });
     expect(result.state.players.P1.spellTrapZones[1]).toMatchObject({
       instanceId: reveal.instanceId,
@@ -83,7 +89,94 @@ describe("effect costs", () => {
       "send-to-graveyard",
       "banish-from-graveyard",
       "reveal",
+      "return-to-hand",
     ]);
+  });
+
+  it("rejects illegal cost payments before mutating state", () => {
+    const base = stateWithPriority([SOURCE_ID]);
+    const tribute = zoneCard("tribute-source", TRIBUTE_ID, "P1");
+    const state: DuelState = {
+      ...base,
+      players: {
+        ...base.players,
+        P1: {
+          ...base.players.P1,
+          monsterZones: [tribute, null, null, null, null],
+        },
+      },
+    };
+    const frozen = deepFreeze(state);
+    const before = JSON.parse(JSON.stringify(frozen));
+    const result = payCosts(frozen, "P1", [{ kind: "discard", count: 1 }], {
+      instanceIds: [tribute.instanceId],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe("Discard costs must use cards from hand.");
+    expect(result.state).toEqual(before);
+    expect(frozen).toEqual(before);
+  });
+
+  it("keeps paid costs paid when resolution later has no valid target", () => {
+    const targetRef: ZoneRef = { playerId: "P2", zone: "monsterZone", index: 0 };
+    const state = stateWithScripts([
+      {
+        cardId: SOURCE_ID,
+        effects: [
+          {
+            id: "costed-targeted-effect",
+            kind: "quick",
+            implemented: true,
+            spellSpeed: 2,
+            costs: [{ kind: "discard", count: 1 }],
+            targets: [
+              {
+                kind: "card",
+                controller: "opponent",
+                zones: ["monsterZone"],
+                cardKinds: ["monster"],
+                face: "faceUp",
+                min: 1,
+                max: 1,
+              },
+            ],
+            resolution: {
+              steps: [{ kind: "destroy-targets" }],
+              sendSourceToGraveyard: false,
+            },
+          },
+        ],
+      },
+    ], [DISCARD_ID]);
+    const source = requireHandCard(state, "P1", SOURCE_ID);
+    const discard = requireHandCard(state, "P1", DISCARD_ID);
+    const activation = reduceDuel(state, {
+      type: "activate-card",
+      playerId: "P1",
+      instanceId: source.instanceId,
+      effectId: "costed-targeted-effect",
+      costInstanceIds: [discard.instanceId],
+      targetRefs: [targetRef],
+    });
+    const invalidated: DuelState = {
+      ...activation.state,
+      players: {
+        ...activation.state.players,
+        P2: {
+          ...activation.state.players.P2,
+          monsterZones: [null, null, null, null, null],
+        },
+      },
+    };
+    const resolved = reduceDuel(invalidated, { type: "resolve-chain", playerId: "P1" });
+
+    expect(activation.errors).toEqual([]);
+    expect(activation.events.some((event) => event.type === "cost-paid" && event.costKind === "discard")).toBe(true);
+    expect(activation.state.players.P1.hand.some((card) => card.instanceId === discard.instanceId)).toBe(false);
+    expect(resolved.errors).toEqual([]);
+    expect(resolved.events.map((event) => event.type)).toContain("effect-resolved-without-effect");
+    expect(resolved.state.players.P1.graveyard.some((card) => card.instanceId === discard.instanceId)).toBe(true);
   });
 });
 
@@ -128,7 +221,7 @@ describe("effect targets", () => {
     });
 
     expect(activation.errors).toEqual([]);
-    expect(activation.state.chain[0]?.selectedTargets).toEqual({
+    expect(activation.state.chain[0]?.selectedTargets).toMatchObject({
       targetRefs: [targetRef],
       targetPlayerIds: [],
     });
@@ -254,8 +347,8 @@ describe("effect prompts", () => {
   });
 });
 
-function stateWithScripts(scripts: readonly CardScript[]): DuelState {
-  const state = stateWithPriority(scripts.map((script) => script.cardId));
+function stateWithScripts(scripts: readonly CardScript[], extraPriorityIds: readonly string[] = []): DuelState {
+  const state = stateWithPriority([...scripts.map((script) => script.cardId), ...extraPriorityIds]);
 
   return {
     ...state,

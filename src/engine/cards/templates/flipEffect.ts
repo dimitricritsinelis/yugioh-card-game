@@ -24,7 +24,8 @@ export function createFlipEffectScript(config: FlipEffectTemplateConfig): CardSc
         targets: config.targets,
         trigger: Object.freeze({
           timing: "after-action",
-          eventTypes: Object.freeze(["summon-successful"] as const),
+          timings: Object.freeze(["after-action", "chain-resolved"] as const),
+          eventTypes: Object.freeze(["summon-successful", "monster-flipped-face-up"] as const),
           eventPlayer: "self",
           sourceEvent: "self",
           summonKinds: Object.freeze(["flip"] as const),

@@ -7,6 +7,7 @@ const REQUIRED_MAIN_DECK_SIZE = 40;
 
 export interface DeckValidationOptions {
   allowUnsupportedCards?: boolean;
+  allowExtraDeck?: boolean;
   coverageRegistry?: CardCoverageRegistry;
 }
 
@@ -29,7 +30,7 @@ export function validateDeck(
     errors.push("Side Deck is not supported for playable duels.");
   }
 
-  if (extra.length > 0) {
+  if (extra.length > 0 && !options.allowExtraDeck) {
     errors.push("Extra Deck is not supported for playable duels.");
   }
 
@@ -47,6 +48,11 @@ export function validateDeck(
       continue;
     }
 
+    if (isFusionMonster(card)) {
+      errors.push(`${card.name} is a Fusion Monster and must be placed in the Extra Deck.`);
+      continue;
+    }
+
     if (!options.allowUnsupportedCards) {
       const coverage = getCardCoverage(card, options.coverageRegistry);
 
@@ -54,6 +60,24 @@ export function validateDeck(
         errors.push(`${card.name} is ${getCoverageRejectionReason(coverage)}.`);
         continue;
       }
+    }
+  }
+
+  for (const passcode of extra) {
+    const card = cardByPasscode.get(passcode);
+
+    if (!card) {
+      errors.push(`Unknown Extra Deck card: ${passcode}.`);
+      continue;
+    }
+
+    if (!isFusionMonster(card)) {
+      errors.push(`${card.name} is not a Fusion Monster and cannot be placed in the Extra Deck.`);
+      continue;
+    }
+
+    if (card.legality.goat_world_pool !== true) {
+      errors.push(`${card.name} is not legal in the Goat World card pool.`);
     }
   }
 
@@ -80,4 +104,8 @@ export function validateDeck(
     valid: errors.length === 0,
     errors,
   };
+}
+
+function isFusionMonster(card: CardRecord): boolean {
+  return card.category === "Monster" && card.classifications.includes("Fusion");
 }

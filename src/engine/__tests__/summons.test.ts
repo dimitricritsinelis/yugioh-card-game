@@ -115,7 +115,11 @@ describe("core summon rules", () => {
     const base = advanceToM1(createFixtureDuel(["Blue-Eyes White Dragon", "Battle Ox", "Aqua Madoor"]).state);
     const blueEyes = requireHandCard(base, "P1", "Blue-Eyes White Dragon");
     const tributeA = monsterZone("tribute-a", "Battle Ox", "P1");
-    const tributeB = monsterZone("tribute-b", "Aqua Madoor", "P1");
+    const tributeB = monsterZone("tribute-b", "Aqua Madoor", "P1", {
+      face: "faceDown",
+      position: "defense",
+      visibility: "hidden",
+    });
     const withTributes: DuelState = {
       ...base,
       players: {
@@ -151,6 +155,32 @@ describe("core summon rules", () => {
       visibility: "hidden",
     });
     expect(result.events.map((event) => event.type)).toEqual(["card-moved", "card-moved", "monster-set"]);
+    expect(result.events.slice(0, 2)).toEqual([
+      expect.objectContaining({
+        type: "card-moved",
+        instanceId: tributeA.instanceId,
+        owner: "P1",
+        controller: "P1",
+        from: { playerId: "P1", zone: "monsterZone", index: 0 },
+        to: { playerId: "P1", zone: "graveyard", index: 0 },
+        visibility: "public",
+        reason: "tribute",
+        phase: "M1",
+        chainDepth: 0,
+      }),
+      expect.objectContaining({
+        type: "card-moved",
+        instanceId: tributeB.instanceId,
+        owner: "P1",
+        controller: "P1",
+        from: { playerId: "P1", zone: "monsterZone", index: 1 },
+        to: { playerId: "P1", zone: "graveyard", index: 0 },
+        visibility: "public",
+        reason: "tribute",
+        phase: "M1",
+        chainDepth: 0,
+      }),
+    ]);
   });
 
   it("Flip Summons a face-down Defense Position monster without consuming the turn summon/set", () => {
@@ -189,29 +219,24 @@ describe("core summon rules", () => {
     expect(result.events[0]).toMatchObject({ summonKind: "flip" });
   });
 
-  it("rejects Ritual and Fusion monsters through the Main Deck summon path", () => {
+  it("rejects Ritual monsters through the Main Deck summon path and Fusion monsters during deck validation", () => {
     const state = advanceToM1(
-      createFixtureDuel(["Paladin of White Dragon", "Thousand-Eyes Restrict"], {
+      createFixtureDuel(["Paladin of White Dragon"], {
         allowUnsupportedCards: true,
       }).state,
     );
     const ritual = requireHandCard(state, "P1", "Paladin of White Dragon");
-    const fusion = requireHandCard(state, "P1", "Thousand-Eyes Restrict");
     const ritualResult = reduceDuel(state, {
       type: "normal-summon",
       playerId: "P1",
       instanceId: ritual.instanceId,
       zoneIndex: 0,
     });
-    const fusionResult = reduceDuel(state, {
-      type: "normal-summon",
-      playerId: "P1",
-      instanceId: fusion.instanceId,
-      zoneIndex: 0,
-    });
 
     expect(ritualResult.errors[0]?.message).toBe("Ritual Monsters cannot be Normal Summoned or Set.");
-    expect(fusionResult.errors[0]?.message).toContain("Fusion Monsters cannot be summoned");
+    expect(() => createFixtureDuel(["Thousand-Eyes Restrict"], { allowUnsupportedCards: true })).toThrow(
+      "Thousand-Eyes Restrict is a Fusion Monster and must be placed in the Extra Deck.",
+    );
     expect(JSON.stringify(state)).not.toContain("extraDeck");
   });
 });

@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
+import type { CardScript } from "../cards/CardScript";
 import { isPlayableCard } from "../cards/coverage";
+import { createCardScriptRegistry } from "../cards/registry";
+import { createNormalTrapScript } from "../cards/templates/normalTrap";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
 import { createDuel, reduceDuel } from "../reducer";
 
 const cards = cardsJson as CardRecord[];
+const MIRROR_FORCE_ID = "44095762";
 
 describe("core battle flow", () => {
   it("declares a direct attack, applies battle damage, and marks the attacker", () => {
@@ -191,6 +195,47 @@ describe("core battle flow", () => {
     expect(result.state.players.P1.lp).toBe(7700);
   });
 
+  it("deterministically stops battle as a replay when the attack target leaves before damage", () => {
+    const state = withOpponentReplayTrap(stateWithBattlefield({
+      attackerName: "Battle Ox",
+      defenderName: "Aqua Madoor",
+    }));
+    const attacker = state.players.P1.monsterZones[0]!;
+    const defender = state.players.P2.monsterZones[0]!;
+    const attack = reduceDuel(state, {
+      type: "attack",
+      playerId: "P1",
+      attackerInstanceId: attacker.instanceId,
+      defenderInstanceId: defender.instanceId,
+    });
+    const answered = reduceDuel(attack.state, {
+      type: "answer-prompt",
+      playerId: "P2",
+      promptId: "prompt-1",
+      targetRefs: [{ playerId: "P2", zone: "monsterZone", index: 0 }],
+    });
+    const resolved = reduceDuel(answered.state, { type: "resolve-chain", playerId: "P1" });
+
+    expect(attack.errors).toEqual([]);
+    expect(attack.prompts[0]).toMatchObject({ kind: "target", playerId: "P2" });
+    expect(answered.errors).toEqual([]);
+    expect(resolved.errors).toEqual([]);
+    expect(resolved.state.pendingAttack).toBeNull();
+    expect(resolved.state.players.P1.lp).toBe(8000);
+    expect(resolved.state.players.P2.lp).toBe(8000);
+    expect(resolved.state.players.P1.monsterZones[0]).toMatchObject({
+      instanceId: attacker.instanceId,
+      attackedTurn: state.turn,
+    });
+    expect(resolved.state.players.P2.monsterZones[0]).toBeNull();
+    expect(resolved.state.players.P2.graveyard).toEqual([
+      expect.objectContaining({ instanceId: "p2-replay-trap" }),
+      expect.objectContaining({ instanceId: defender.instanceId }),
+    ]);
+    expect(resolved.events.some((event) => event.type === "battle-completed")).toBe(false);
+    expect(resolved.events.some((event) => event.type === "battle-damage")).toBe(false);
+  });
+
   it("destroys both attack-position monsters when their ATK is equal, including 0 ATK", () => {
     const state = stateWithBattlefield({
       attackerName: "Thousand-Eyes Idol",
@@ -248,6 +293,55 @@ describe("core battle flow", () => {
     expect(repeatedResult.errors[0]?.message).toBe("That monster has already attacked this turn.");
   });
 });
+
+function withOpponentReplayTrap(state: DuelState): DuelState {
+  const script = replayTrapScript();
+  const trap: ZoneCard = {
+    instanceId: "p2-replay-trap",
+    cardId: MIRROR_FORCE_ID,
+    owner: "P2",
+    controller: "P2",
+    face: "faceDown",
+    position: null,
+    visibility: "hidden",
+    counters: {},
+    attachments: [],
+    setTurn: 0,
+  };
+
+  return {
+    ...state,
+    cardScripts: createCardScriptRegistry([script]),
+    players: {
+      ...state.players,
+      P2: {
+        ...state.players.P2,
+        spellTrapZones: [trap, null, null, null, null],
+      },
+    },
+  };
+}
+
+function replayTrapScript(): CardScript {
+  return createNormalTrapScript({
+    cardId: MIRROR_FORCE_ID,
+    timing: "after-action",
+    eventTypes: ["attack-declared"],
+    eventPlayer: "opponent",
+    targets: [
+      {
+        kind: "card",
+        controller: "own",
+        zones: ["monsterZone"],
+        cardKinds: ["monster"],
+        face: "any",
+        min: 1,
+        max: 1,
+      },
+    ],
+    steps: [{ kind: "destroy-targets" }],
+  });
+}
 
 function stateWithBattlefield(options: {
   attackerName: string;

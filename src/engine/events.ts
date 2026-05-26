@@ -1,5 +1,5 @@
 import type { Phase } from "../types";
-import type { InstanceId, MonsterPosition, ZoneRef } from "./core/cardRefs";
+import type { CardVisibility, InstanceId, MonsterPosition, ZoneRef } from "./core/cardRefs";
 import type { PlayerId } from "./types";
 
 export type EngineEventType =
@@ -10,6 +10,7 @@ export type EngineEventType =
   | "card-moved"
   | "summon-declared"
   | "summon-successful"
+  | "monster-flipped-face-up"
   | "monster-set"
   | "spell-trap-set"
   | "position-changed"
@@ -72,8 +73,14 @@ export interface CardMovedEvent extends BaseEngineEvent {
   readonly playerId: PlayerId;
   readonly instanceId: InstanceId;
   readonly cardId: string;
+  readonly owner: PlayerId;
+  readonly controller: PlayerId;
   readonly from: ZoneRef;
   readonly to: ZoneRef;
+  readonly visibility: CardVisibility;
+  readonly reason: string;
+  readonly phase: Phase;
+  readonly chainDepth: number;
 }
 
 export interface SummonDeclaredEvent extends BaseEngineEvent {
@@ -92,6 +99,15 @@ export interface SummonSuccessfulEvent extends BaseEngineEvent {
   readonly cardId: string;
   readonly zone: ZoneRef;
   readonly summonKind: "normal" | "tribute" | "flip" | "special";
+}
+
+export interface MonsterFlippedFaceUpEvent extends BaseEngineEvent {
+  readonly type: "monster-flipped-face-up";
+  readonly playerId: PlayerId;
+  readonly instanceId: InstanceId;
+  readonly cardId: string;
+  readonly zone: ZoneRef;
+  readonly reason: "battle" | "effect";
 }
 
 export interface MonsterSetEvent extends BaseEngineEvent {
@@ -269,6 +285,7 @@ export type EngineEvent =
   | CardMovedEvent
   | SummonDeclaredEvent
   | SummonSuccessfulEvent
+  | MonsterFlippedFaceUpEvent
   | MonsterSetEvent
   | SpellTrapSetEvent
   | PositionChangedEvent

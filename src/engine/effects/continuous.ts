@@ -11,11 +11,18 @@ export type BattleStat = "atk" | "def";
 
 export interface EffectTargetFilter {
   readonly source?: "self";
+  readonly attachedToSource?: boolean;
+  readonly sourceEffectIds?: readonly string[];
+  readonly attackingFaceDownDefenseMonster?: boolean;
   readonly controller?: EffectTargetController;
   readonly instanceIds?: readonly string[];
   readonly cardIds?: readonly string[];
   readonly face?: "faceUp" | "faceDown" | "any";
   readonly counters?: readonly CounterRequirement[];
+  readonly monsterType?: string;
+  readonly attribute?: string;
+  readonly levelMin?: number;
+  readonly levelMax?: number;
 }
 
 export interface CounterRequirement {
@@ -26,17 +33,24 @@ export interface CounterRequirement {
 
 export interface StatModifierSpec {
   readonly stat: BattleStat;
-  readonly amount: number;
+  readonly amount?: number;
+  readonly setTo?: number;
   readonly target: EffectTargetFilter;
 }
 
 export interface AttackRestrictionSpec {
   readonly target: EffectTargetFilter;
+  readonly defender?: EffectTargetFilter;
   readonly reason?: string;
 }
 
 export interface DirectAttackSpec {
   readonly target: EffectTargetFilter;
+}
+
+export interface DirectAttackRestrictionSpec {
+  readonly target: EffectTargetFilter;
+  readonly reason?: string;
 }
 
 export interface PiercingDamageSpec {
@@ -46,6 +60,7 @@ export interface PiercingDamageSpec {
 export interface ActivationRestrictionSpec {
   readonly cardKinds?: readonly CardKind[];
   readonly controller?: EffectTargetController;
+  readonly phases?: readonly DuelState["phase"][];
   readonly reason?: string;
 }
 
@@ -57,6 +72,7 @@ export interface EffectNegationSpec {
 export interface ContinuousEffectDefinition {
   readonly statModifiers?: readonly StatModifierSpec[];
   readonly attackRestrictions?: readonly AttackRestrictionSpec[];
+  readonly directAttackRestrictions?: readonly DirectAttackRestrictionSpec[];
   readonly directAttack?: readonly DirectAttackSpec[];
   readonly piercingDamage?: readonly PiercingDamageSpec[];
   readonly activationRestrictions?: readonly ActivationRestrictionSpec[];
@@ -88,13 +104,16 @@ export function deriveBattleStats(state: DuelState, input: MonsterStatInput): Ba
   );
   const modified = modifiers.reduce(
     (stats, modifier) => {
-      if (!matchesTarget(input, modifier.sourcePlayerId, modifier.modifier.target, modifier.sourceInstanceId)) {
+      if (!matchesTarget(state, input, modifier.sourcePlayerId, modifier.modifier.target, modifier.sourceInstanceId)) {
         return stats;
       }
 
+      const current = modifier.modifier.stat === "atk" ? stats.atk : stats.def;
+      const value = modifier.modifier.setTo ?? current + (modifier.modifier.amount ?? 0);
+
       return {
-        atk: modifier.modifier.stat === "atk" ? stats.atk + modifier.modifier.amount : stats.atk,
-        def: modifier.modifier.stat === "def" ? stats.def + modifier.modifier.amount : stats.def,
+        atk: modifier.modifier.stat === "atk" ? value : stats.atk,
+        def: modifier.modifier.stat === "def" ? value : stats.def,
       };
     },
     input.base,
@@ -110,12 +129,21 @@ export function validateContinuousAttackRestrictions(
   state: DuelState,
   playerId: PlayerId,
   attacker: ZoneCard,
+  defender?: { readonly playerId: PlayerId; readonly card: ZoneCard } | null,
 ): string | null {
   const input = { playerId, card: attacker, base: { atk: 0, def: 0 } };
 
   for (const source of collectContinuousSources(state)) {
     for (const restriction of source.definition.attackRestrictions ?? []) {
-      if (matchesTarget(input, source.playerId, restriction.target, source.sourceInstanceId)) {
+      const defenderInput = defender
+        ? { playerId: defender.playerId, card: defender.card, base: { atk: 0, def: 0 } }
+        : null;
+      const defenderMatches = !restriction.defender || (
+        defenderInput !== null &&
+        matchesTarget(state, defenderInput, source.playerId, restriction.defender, source.sourceInstanceId)
+      );
+
+      if (defenderMatches && matchesTarget(state, input, source.playerId, restriction.target, source.sourceInstanceId)) {
         return restriction.reason ?? "That monster cannot attack because of an active effect.";
       }
     }
@@ -129,9 +157,27 @@ export function canAttackDirectly(state: DuelState, input: Omit<MonsterStatInput
 
   return collectContinuousSources(state).some((source) =>
     (source.definition.directAttack ?? []).some((effect) =>
-      matchesTarget(matcher, source.playerId, effect.target, source.sourceInstanceId),
+      matchesTarget(state, matcher, source.playerId, effect.target, source.sourceInstanceId),
     ),
   );
+}
+
+export function validateDirectAttackRestrictions(
+  state: DuelState,
+  playerId: PlayerId,
+  attacker: ZoneCard,
+): string | null {
+  const input = { playerId, card: attacker, base: { atk: 0, def: 0 } };
+
+  for (const source of collectContinuousSources(state)) {
+    for (const restriction of source.definition.directAttackRestrictions ?? []) {
+      if (matchesTarget(state, input, source.playerId, restriction.target, source.sourceInstanceId)) {
+        return restriction.reason ?? "That monster cannot attack directly because of an active effect.";
+      }
+    }
+  }
+
+  return null;
 }
 
 export function hasPiercingDamage(state: DuelState, input: Omit<MonsterStatInput, "base">): boolean {
@@ -139,7 +185,7 @@ export function hasPiercingDamage(state: DuelState, input: Omit<MonsterStatInput
 
   return collectContinuousSources(state).some((source) =>
     (source.definition.piercingDamage ?? []).some((effect) =>
-      matchesTarget(matcher, source.playerId, effect.target, source.sourceInstanceId),
+      matchesTarget(state, matcher, source.playerId, effect.target, source.sourceInstanceId),
     ),
   );
 }
@@ -151,6 +197,10 @@ export function validateContinuousActivationRestrictions(
 ): string | null {
   for (const source of collectContinuousSources(state)) {
     for (const restriction of source.definition.activationRestrictions ?? []) {
+      if (restriction.phases && !restriction.phases.includes(state.phase)) {
+        continue;
+      }
+
       if (matchesCardEffectFilter(source.playerId, playerId, cardKind, restriction)) {
         return restriction.reason ?? "That card cannot be activated because of an active effect.";
       }
@@ -249,6 +299,7 @@ function matchesCardEffectFilter(
 }
 
 function matchesTarget(
+  state: DuelState,
   input: MonsterStatInput,
   sourcePlayerId: PlayerId,
   target: EffectTargetFilter,
@@ -256,6 +307,32 @@ function matchesTarget(
 ): boolean {
   if (target.source === "self" && input.card.instanceId !== sourceInstanceId) {
     return false;
+  }
+
+  if (target.attackingFaceDownDefenseMonster && !matchesPendingAttackAgainstFaceDownDefense(state, input, sourceInstanceId)) {
+    return false;
+  }
+
+  if (target.attachedToSource && (!sourceInstanceId || !input.card.attachments.includes(sourceInstanceId))) {
+    return false;
+  }
+
+  if (target.sourceEffectIds !== undefined) {
+    if (!sourceInstanceId) {
+      return false;
+    }
+
+    const source = findCardByInstanceId(state, sourceInstanceId);
+
+    if (!source || !("face" in source.card)) {
+      return false;
+    }
+
+    const markers = source.card.effectMarkers ?? [];
+
+    if (!target.sourceEffectIds.some((effectId) => markers.includes(effectId))) {
+      return false;
+    }
   }
 
   if (target.controller && target.controller !== "any") {
@@ -294,7 +371,55 @@ function matchesTarget(
     }
   }
 
+  if (target.monsterType !== undefined || target.attribute !== undefined || target.levelMin !== undefined || target.levelMax !== undefined) {
+    const definition = state.cardDefinitions?.[input.card.cardId];
+
+    if (!definition || definition.kind !== "monster") {
+      return false;
+    }
+
+    if (target.monsterType !== undefined && definition.monster.type !== target.monsterType) {
+      return false;
+    }
+
+    if (target.attribute !== undefined && definition.monster.attribute !== target.attribute) {
+      return false;
+    }
+
+    if (target.levelMin !== undefined && (definition.monster.level ?? 0) < target.levelMin) {
+      return false;
+    }
+
+    if (target.levelMax !== undefined && (definition.monster.level ?? 0) > target.levelMax) {
+      return false;
+    }
+  }
+
   return true;
+}
+
+function matchesPendingAttackAgainstFaceDownDefense(
+  state: DuelState,
+  input: MonsterStatInput,
+  sourceInstanceId: string | undefined,
+): boolean {
+  const pending = state.pendingAttack;
+
+  const effectSourceMatchesInput = sourceInstanceId !== undefined &&
+    (input.card.instanceId === sourceInstanceId || input.card.attachments.includes(sourceInstanceId));
+
+  if (!pending || !effectSourceMatchesInput || pending.attackerInstanceId !== input.card.instanceId) {
+    return false;
+  }
+
+  const defender = pending.defenderInstanceId ? findCardByInstanceId(state, pending.defenderInstanceId) : null;
+
+  return (
+    defender?.ref.zone === "monsterZone" &&
+    "face" in defender.card &&
+    defender.card.face === "faceDown" &&
+    defender.card.position === "defense"
+  );
 }
 
 function collectFieldSources(state: DuelState): readonly { readonly ref: ZoneRef; readonly card: ZoneCard }[] {

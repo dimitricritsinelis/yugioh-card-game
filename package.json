@@ -8,6 +8,10 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run --dir src",
+    "coverage:matrix": "node scripts/goat-coverage-tools.mjs generate-matrix",
+    "coverage:validate": "node scripts/goat-coverage-tools.mjs validate",
+    "coverage:final": "node scripts/goat-coverage-tools.mjs validate --final",
+    "coverage:report": "node scripts/goat-coverage-tools.mjs report",
     "preview": "vite preview"
   },
   "dependencies": {

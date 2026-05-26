@@ -56,7 +56,7 @@ describe("playable deck validation", () => {
     const result = validateDeck(deckWithPriority(["Thousand-Eyes Restrict"]), cards);
 
     expect(result.valid).toBe(false);
-    expect(result.errors.join(" ")).toContain("Extra/Fusion Decks are outside playable scope");
+    expect(result.errors.join(" ")).toContain("Thousand-Eyes Restrict is a Fusion Monster and must be placed in the Extra Deck.");
   });
 
   it("rejects unsupported cards when a playable support set is provided", () => {

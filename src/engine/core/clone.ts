@@ -33,6 +33,11 @@ export function cloneDuelState(state: DuelState): DuelState {
         attackRestrictions: effect.definition.attackRestrictions?.map((restriction) => ({
           ...restriction,
           target: { ...restriction.target },
+          defender: restriction.defender ? { ...restriction.defender } : undefined,
+        })),
+        directAttackRestrictions: effect.definition.directAttackRestrictions?.map((restriction) => ({
+          ...restriction,
+          target: { ...restriction.target },
         })),
         directAttack: effect.definition.directAttack?.map((directAttack) => ({
           ...directAttack,
@@ -44,6 +49,11 @@ export function cloneDuelState(state: DuelState): DuelState {
         })),
       },
     })),
+    controlChangeReturns: state.controlChangeReturns?.map((controlReturn) => ({ ...controlReturn })),
+    effectUsage: state.effectUsage
+      ? Object.fromEntries(Object.entries(state.effectUsage).map(([key, usage]) => [key, { ...usage }]))
+      : undefined,
+    negatedChainLinkIds: state.negatedChainLinkIds ? [...state.negatedChainLinkIds] : undefined,
     prompts: Object.fromEntries(Object.entries(state.prompts).map(([id, prompt]) => [id, { ...prompt }])),
     pendingPromptIds: [...state.pendingPromptIds],
     eventIds: [...state.eventIds],
@@ -54,6 +64,7 @@ export function clonePlayerState(player: PlayerState): PlayerState {
   return {
     ...player,
     mainDeck: player.mainDeck.map((card) => ({ ...card })),
+    fusionDeck: player.fusionDeck?.map((card) => ({ ...card })) ?? [],
     hand: player.hand.map((card) => ({ ...card })),
     monsterZones: player.monsterZones.map((card) => cloneZoneCard(card)),
     spellTrapZones: player.spellTrapZones.map((card) => cloneZoneCard(card)),
@@ -73,5 +84,7 @@ function cloneZoneCard<T extends PlayerState["fieldZone"]>(card: T): T {
     counters: { ...card.counters },
     attachments: [...card.attachments],
     ...(card.attachmentBehaviors ? { attachmentBehaviors: { ...card.attachmentBehaviors } } : {}),
+    ...(card.effectMarkers ? { effectMarkers: [...card.effectMarkers] } : {}),
+    ...(card.token ? { token: { ...card.token } } : {}),
   };
 }

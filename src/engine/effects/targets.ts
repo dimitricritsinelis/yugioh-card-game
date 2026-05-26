@@ -12,7 +12,13 @@ export interface CardTargetSpec {
   readonly controller: TargetController;
   readonly zones: readonly ZoneRef["zone"][];
   readonly cardKinds?: readonly TargetCardKind[];
+  readonly cardIds?: readonly string[];
   readonly face?: TargetFace;
+  readonly spellTrapIcon?: string;
+  readonly monsterType?: string;
+  readonly attribute?: string;
+  readonly levelMin?: number;
+  readonly levelMax?: number;
   readonly min: number;
   readonly max: number;
 }
@@ -34,6 +40,7 @@ export interface TargetSelection {
 export interface SelectedTargets {
   readonly targetRefs: readonly ZoneRef[];
   readonly targetPlayerIds: readonly PlayerId[];
+  readonly targetInstanceIds?: readonly string[];
 }
 
 export interface TargetValidationResult {
@@ -99,8 +106,13 @@ export function validateTargetSelection(
     selectedTargets: Object.freeze({
       targetRefs: Object.freeze([...targetRefs]),
       targetPlayerIds: Object.freeze([...targetPlayerIds]),
+      targetInstanceIds: Object.freeze(targetRefs.map((ref) => cardAtRef(state, ref)?.instanceId).filter(isString)),
     }),
   };
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
 export function validateStoredTargets(
@@ -109,7 +121,21 @@ export function validateStoredTargets(
   specs: readonly TargetSpec[] | undefined,
   targets: SelectedTargets | undefined,
 ): TargetValidationResult {
-  return validateTargetSelection(state, activatingPlayerId, specs ?? [], targets ?? {}, state.cardDefinitions);
+  if (!targets?.targetInstanceIds?.length) {
+    return validateTargetSelection(state, activatingPlayerId, specs ?? [], targets ?? {}, state.cardDefinitions);
+  }
+
+  const targetRefs = (targets.targetRefs ?? []).map((ref, index) =>
+    findRefByInstanceId(state, targets.targetInstanceIds?.[index]) ?? ref,
+  );
+
+  return validateTargetSelection(
+    state,
+    activatingPlayerId,
+    specs ?? [],
+    { ...targets, targetRefs },
+    state.cardDefinitions,
+  );
 }
 
 function validateCardTarget(
@@ -145,6 +171,46 @@ function validateCardTarget(
     }
   }
 
+  if (spec.cardIds && !spec.cardIds.includes(card.cardId)) {
+    return "Target card identity does not match target requirements.";
+  }
+
+  if (spec.spellTrapIcon !== undefined) {
+    const definition = cardDefinitions?.[card.cardId];
+
+    if (!definition || (definition.kind !== "spell" && definition.kind !== "trap")) {
+      return "Target must be a Spell or Trap Card.";
+    }
+
+    if (definition.spellTrap.icon !== spec.spellTrapIcon) {
+      return `Target must be a ${spec.spellTrapIcon} Spell Card.`;
+    }
+  }
+
+  if (spec.monsterType !== undefined || spec.attribute !== undefined || spec.levelMin !== undefined || spec.levelMax !== undefined) {
+    const definition = cardDefinitions?.[card.cardId];
+
+    if (!definition || definition.kind !== "monster") {
+      return "Target must be a monster.";
+    }
+
+    if (spec.monsterType !== undefined && definition.monster.type !== spec.monsterType) {
+      return `Target must be a ${spec.monsterType} monster.`;
+    }
+
+    if (spec.attribute !== undefined && definition.monster.attribute !== spec.attribute) {
+      return `Target must be a ${spec.attribute} monster.`;
+    }
+
+    if (spec.levelMin !== undefined && (definition.monster.level ?? 0) < spec.levelMin) {
+      return `Target must be Level ${spec.levelMin} or higher.`;
+    }
+
+    if (spec.levelMax !== undefined && (definition.monster.level ?? 0) > spec.levelMax) {
+      return `Target must be Level ${spec.levelMax} or lower.`;
+    }
+  }
+
   return null;
 }
 
@@ -166,6 +232,8 @@ function cardAtRef(state: DuelState, ref: ZoneRef) {
   switch (ref.zone) {
     case "mainDeck":
       return player.mainDeck[ref.index] ?? null;
+    case "fusionDeck":
+      return player.fusionDeck?.[ref.index] ?? null;
     case "hand":
       return player.hand[ref.index] ?? null;
     case "monsterZone":
@@ -179,6 +247,39 @@ function cardAtRef(state: DuelState, ref: ZoneRef) {
     case "fieldZone":
       return player.fieldZone;
   }
+}
+
+function findRefByInstanceId(state: DuelState, instanceId: string | undefined): ZoneRef | null {
+  if (!instanceId) {
+    return null;
+  }
+
+  for (const playerId of ["P1", "P2"] as const) {
+    const player = state.players[playerId];
+    const zones: readonly [ZoneRef["zone"], readonly ({ readonly instanceId: string } | null)[]][] = [
+      ["mainDeck", player.mainDeck],
+      ["fusionDeck", player.fusionDeck ?? []],
+      ["hand", player.hand],
+      ["monsterZone", player.monsterZones],
+      ["spellTrapZone", player.spellTrapZones],
+      ["graveyard", player.graveyard],
+      ["banished", player.banished],
+    ];
+
+    for (const [zone, cards] of zones) {
+      const index = cards.findIndex((card) => card?.instanceId === instanceId);
+
+      if (index >= 0) {
+        return { playerId, zone, index };
+      }
+    }
+
+    if (player.fieldZone?.instanceId === instanceId) {
+      return { playerId, zone: "fieldZone" };
+    }
+  }
+
+  return null;
 }
 
 function matchesController(activatingPlayerId: PlayerId, targetPlayerId: PlayerId, controller: TargetController): boolean {
@@ -200,6 +301,7 @@ function inferKindFromZone(zone: ZoneRef["zone"]): TargetCardKind | null {
     case "fieldZone":
       return "spell";
     case "mainDeck":
+    case "fusionDeck":
     case "hand":
     case "graveyard":
     case "banished":

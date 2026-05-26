@@ -7,6 +7,7 @@ import { createCardScriptRegistry } from "../cards/registry";
 import { createContinuousTrapScript } from "../cards/templates/continuousTrap";
 import { createCounterTrapScript } from "../cards/templates/counterTrap";
 import { createNormalTrapScript } from "../cards/templates/normalTrap";
+import { createSpellSpeed2TrapScript } from "../cards/templates/spellSpeed2Trap";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
 import { createDuel, reduceDuel } from "../reducer";
@@ -201,7 +202,7 @@ describe("Trap templates", () => {
     expect(resolved.state.players.P1.graveyard[0]).toMatchObject({ instanceId: monster.instanceId });
   });
 
-  it("creates Counter Trap and Continuous Trap template scripts without adding production coverage", () => {
+  it("creates Counter Trap, Continuous Trap, and generic Spell Speed 2 Trap template scripts without adding production coverage", () => {
     const counter = createCounterTrapScript({
       cardId: SEVEN_TOOLS_ID,
       timing: "after-action",
@@ -220,9 +221,15 @@ describe("Trap templates", () => {
         ],
       },
     });
+    const spellSpeed2 = createSpellSpeed2TrapScript({
+      cardId: WABOKU_ID,
+      steps: [{ kind: "draw", player: "self", count: 1 }],
+    });
 
     expect(counter.effects[0]).toMatchObject({ kind: "trigger", spellSpeed: 3 });
     expect(continuous.effects[0]).toMatchObject({ kind: "continuous", implemented: true });
+    expect(spellSpeed2.effects[0]).toMatchObject({ kind: "quick", spellSpeed: 2 });
+    expect(spellSpeed2.effects[0]?.resolution).toMatchObject({ sendSourceToGraveyard: true });
   });
 });
 

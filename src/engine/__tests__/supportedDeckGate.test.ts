@@ -44,7 +44,9 @@ describe("supported playable deck gate", () => {
     expect(getCardCoverage(thousandEyes).status).toBe("goatDeckBlocked");
     expect(isPlayableCard(thousandEyes.passcode, cards)).toBe(false);
     expect(result.valid).toBe(false);
-    expect(result.errors.join(" ")).toContain("Extra/Fusion Decks are outside playable scope");
+    expect(result.errors.join(" ")).toContain(
+      "Thousand-Eyes Restrict is a Fusion Monster and must be placed in the Extra Deck.",
+    );
   });
 
   it("blocks cards outside the current playable scope", () => {

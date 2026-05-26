@@ -1,4 +1,4 @@
-import type { CardInstance, FaceState, MonsterPosition, ZoneCard, ZoneRef } from "./cardRefs";
+import type { CardInstance, FaceState, MonsterPosition, ZoneCard, ZoneKind, ZoneRef } from "./cardRefs";
 import { cloneDuelState } from "./clone";
 import type { DuelState, PlayerState } from "./state";
 
@@ -13,7 +13,13 @@ export interface ZoneCardOptions {
   readonly face?: FaceState;
   readonly position?: MonsterPosition | null;
   readonly visibility?: ZoneCard["visibility"];
+  readonly sentToGraveyardTurn?: number;
+  readonly sentToGraveyardFromController?: ZoneCard["controller"];
+  readonly sentToGraveyardFromZone?: ZoneKind;
 }
+
+type ResolvedZoneCardOptions = Required<Pick<ZoneCardOptions, "face" | "position" | "visibility">> &
+  Pick<ZoneCardOptions, "sentToGraveyardTurn" | "sentToGraveyardFromController" | "sentToGraveyardFromZone">;
 
 export interface RemoveFromZoneResult {
   readonly state: DuelState;
@@ -27,6 +33,12 @@ export function findCardByInstanceId(state: DuelState, instanceId: string): Loca
     for (const [index, card] of player.mainDeck.entries()) {
       if (card.instanceId === instanceId) {
         return { card, ref: { playerId, zone: "mainDeck", index } };
+      }
+    }
+
+    for (const [index, card] of (player.fusionDeck ?? []).entries()) {
+      if (card.instanceId === instanceId) {
+        return { card, ref: { playerId, zone: "fusionDeck", index } };
       }
     }
 
@@ -77,6 +89,14 @@ export function removeFromZone(state: DuelState, ref: ZoneRef): RemoveFromZoneRe
       const card = requireArrayCard(player.mainDeck, ref.index, ref.zone);
       return {
         state: updatePlayer(next, ref.playerId, { mainDeck: removeArrayIndex(player.mainDeck, ref.index) }),
+        card,
+      };
+    }
+    case "fusionDeck": {
+      const fusionDeck = player.fusionDeck ?? [];
+      const card = requireArrayCard(fusionDeck, ref.index, ref.zone);
+      return {
+        state: updatePlayer(next, ref.playerId, { fusionDeck: removeArrayIndex(fusionDeck, ref.index) }),
         card,
       };
     }
@@ -139,10 +159,18 @@ export function insertIntoZone(
   const next = cloneDuelState(state);
   const player = next.players[ref.playerId];
 
+  if (isTokenCard(card) && ref.zone !== "monsterZone") {
+    return next;
+  }
+
   switch (ref.zone) {
     case "mainDeck":
       return updatePlayer(next, ref.playerId, {
         mainDeck: insertArrayIndex(player.mainDeck, ref.index, toCardInstance(card)),
+      });
+    case "fusionDeck":
+      return updatePlayer(next, ref.playerId, {
+        fusionDeck: insertArrayIndex(player.fusionDeck ?? [], ref.index, toCardInstance(card)),
       });
     case "hand":
       return updatePlayer(next, ref.playerId, {
@@ -248,6 +276,7 @@ function updateZoneCard(state: DuelState, ref: ZoneRef, updater: (card: ZoneCard
 
       return updatePlayer(next, ref.playerId, { fieldZone: updater(player.fieldZone) });
     case "mainDeck":
+    case "fusionDeck":
     case "hand":
       throw new Error(`Cannot update face or position in ${ref.zone}.`);
   }
@@ -275,7 +304,7 @@ function toCardInstance(card: CardInZone): CardInstance {
   };
 }
 
-function toZoneCard(card: CardInZone, options: Required<ZoneCardOptions>): ZoneCard {
+function toZoneCard(card: CardInZone, options: ResolvedZoneCardOptions): ZoneCard {
   return {
     instanceId: card.instanceId,
     cardId: card.cardId,
@@ -289,30 +318,52 @@ function toZoneCard(card: CardInZone, options: Required<ZoneCardOptions>): ZoneC
     ...("attachmentBehaviors" in card && card.attachmentBehaviors
       ? { attachmentBehaviors: { ...card.attachmentBehaviors } }
       : {}),
+    ...("effectMarkers" in card && card.effectMarkers ? { effectMarkers: [...card.effectMarkers] } : {}),
+    ...(options.sentToGraveyardTurn !== undefined
+      ? {
+          sentToGraveyardTurn: options.sentToGraveyardTurn,
+          sentToGraveyardFromController: options.sentToGraveyardFromController,
+          sentToGraveyardFromZone: options.sentToGraveyardFromZone,
+        }
+      : {}),
+    ...("token" in card && card.token ? { token: { ...card.token } } : {}),
   };
 }
 
-function monsterZoneDefaults(options: ZoneCardOptions): Required<ZoneCardOptions> {
+function isTokenCard(card: CardInZone): boolean {
+  return "token" in card && card.token !== undefined;
+}
+
+function monsterZoneDefaults(options: ZoneCardOptions): ResolvedZoneCardOptions {
   return {
     face: options.face ?? "faceUp",
     position: options.position ?? "attack",
     visibility: options.visibility ?? "public",
+    sentToGraveyardTurn: options.sentToGraveyardTurn,
+    sentToGraveyardFromController: options.sentToGraveyardFromController,
+    sentToGraveyardFromZone: options.sentToGraveyardFromZone,
   };
 }
 
-function spellTrapZoneDefaults(options: ZoneCardOptions): Required<ZoneCardOptions> {
+function spellTrapZoneDefaults(options: ZoneCardOptions): ResolvedZoneCardOptions {
   return {
     face: options.face ?? "faceDown",
     position: options.position ?? null,
     visibility: options.visibility ?? "hidden",
+    sentToGraveyardTurn: options.sentToGraveyardTurn,
+    sentToGraveyardFromController: options.sentToGraveyardFromController,
+    sentToGraveyardFromZone: options.sentToGraveyardFromZone,
   };
 }
 
-function publicZoneDefaults(options: ZoneCardOptions): Required<ZoneCardOptions> {
+function publicZoneDefaults(options: ZoneCardOptions): ResolvedZoneCardOptions {
   return {
     face: options.face ?? "faceUp",
     position: options.position ?? null,
     visibility: options.visibility ?? "public",
+    sentToGraveyardTurn: options.sentToGraveyardTurn,
+    sentToGraveyardFromController: options.sentToGraveyardFromController,
+    sentToGraveyardFromZone: options.sentToGraveyardFromZone,
   };
 }
 

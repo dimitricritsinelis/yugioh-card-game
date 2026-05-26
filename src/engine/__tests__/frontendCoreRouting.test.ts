@@ -91,7 +91,7 @@ describe("frontend-compatible core reducer routing", () => {
       "effect-activated",
       "chain-link-created",
     ]);
-    expect(activated.state.coreState?.chain[0]?.selectedTargets).toEqual({
+    expect(activated.state.coreState?.chain[0]?.selectedTargets).toMatchObject({
       targetRefs: [targetRef],
       targetPlayerIds: [],
     });

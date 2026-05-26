@@ -13,9 +13,12 @@ export type TriggerTiming = "after-action" | "chain-resolved";
 
 export interface TriggerDefinition {
   readonly timing: TriggerTiming;
+  readonly timings?: readonly TriggerTiming[];
   readonly eventTypes?: readonly EngineEventType[];
   readonly eventPlayer?: EffectPlayerSelector | "any";
   readonly sourceEvent?: "self" | "any";
+  readonly sourceFace?: "faceUp" | "faceDown";
+  readonly sourcePosition?: MonsterPosition;
   readonly summonKinds?: readonly ("normal" | "tribute" | "flip" | "special")[];
   readonly fromZones?: readonly ZoneRef["zone"][];
   readonly toZones?: readonly ZoneRef["zone"][];
@@ -25,6 +28,7 @@ export interface TriggerDefinition {
   readonly battleRole?: "attacker" | "defender" | "any";
   readonly battlePositions?: readonly MonsterPosition[];
   readonly optional?: boolean;
+  readonly missesTimingIfNotLast?: boolean;
 }
 
 export interface TriggerCandidate {
@@ -71,7 +75,7 @@ export function collectTriggerCandidates(
     }
 
     for (const effect of script.effects) {
-      const triggerEvent = matchingTriggerEvent(effect, events, timing, location.ref.playerId, location.instanceId);
+      const triggerEvent = matchingTriggerEvent(effect, events, timing, state, location.ref, location.ref.playerId, location.instanceId);
 
       if (triggerEvent) {
         candidates.push({
@@ -175,6 +179,8 @@ function matchingTriggerEvent(
   effect: EffectDefinition,
   events: readonly EngineEvent[],
   timing: TriggerTiming,
+  state: DuelState,
+  sourceRef: ZoneRef,
   sourcePlayerId: PlayerId,
   sourceInstanceId: string,
 ): EngineEvent | null {
@@ -182,11 +188,73 @@ function matchingTriggerEvent(
     return null;
   }
 
-  if (effect.trigger.timing !== timing) {
+  const triggerTimings = effect.trigger.timings ?? [effect.trigger.timing];
+
+  if (!triggerTimings.includes(timing)) {
     return null;
   }
 
-  return events.find((event) => matchesTriggerEvent(effect.trigger!, event, sourcePlayerId, sourceInstanceId)) ?? null;
+  if (!matchesTriggerSourceState(effect.trigger, state, sourceRef)) {
+    return null;
+  }
+
+  return events.find((event, eventIndex) =>
+    matchesTriggerEvent(effect.trigger!, event, sourcePlayerId, sourceInstanceId) &&
+      !missesOptionalTiming(effect.trigger!, events, eventIndex),
+  ) ?? null;
+}
+
+function matchesTriggerSourceState(trigger: TriggerDefinition, state: DuelState, sourceRef: ZoneRef): boolean {
+  if (!trigger.sourceFace && !trigger.sourcePosition) {
+    return true;
+  }
+
+  const source = cardAtSourceRef(state, sourceRef);
+
+  if (!source || !("face" in source)) {
+    return false;
+  }
+
+  if (trigger.sourceFace && source.face !== trigger.sourceFace) {
+    return false;
+  }
+
+  if (trigger.sourcePosition && (!("position" in source) || source.position !== trigger.sourcePosition)) {
+    return false;
+  }
+
+  return true;
+}
+
+function cardAtSourceRef(state: DuelState, ref: ZoneRef) {
+  const player = state.players[ref.playerId];
+
+  switch (ref.zone) {
+    case "monsterZone":
+      return player.monsterZones[ref.index] ?? null;
+    case "spellTrapZone":
+      return player.spellTrapZones[ref.index] ?? null;
+    case "fieldZone":
+      return player.fieldZone;
+    case "graveyard":
+      return player.graveyard[ref.index] ?? null;
+    case "banished":
+      return player.banished[ref.index] ?? null;
+    case "mainDeck":
+      return player.mainDeck[ref.index] ?? null;
+    case "fusionDeck":
+      return player.fusionDeck?.[ref.index] ?? null;
+    case "hand":
+      return player.hand[ref.index] ?? null;
+  }
+}
+
+function missesOptionalTiming(
+  trigger: TriggerDefinition,
+  events: readonly EngineEvent[],
+  matchedEventIndex: number,
+): boolean {
+  return trigger.optional === true && trigger.missesTimingIfNotLast === true && matchedEventIndex !== events.length - 1;
 }
 
 function matchesTriggerEvent(
@@ -338,6 +406,7 @@ function eventInstanceId(event: EngineEvent): string | undefined {
     case "card-moved":
     case "summon-declared":
     case "summon-successful":
+    case "monster-flipped-face-up":
     case "monster-set":
     case "spell-trap-set":
     case "position-changed":

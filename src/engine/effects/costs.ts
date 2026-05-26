@@ -7,23 +7,27 @@ export type CostKind =
   | "none"
   | "discard"
   | "tribute"
+  | "tribute-matching-face-up-card"
   | "tribute-source"
   | "remove-counter-from-source"
   | "pay-lp"
   | "send-to-graveyard"
   | "banish-from-graveyard"
-  | "reveal";
+  | "reveal"
+  | "return-to-hand";
 
 export type CostSpec =
   | { readonly kind: "none" }
   | { readonly kind: "discard"; readonly count: number }
   | { readonly kind: "tribute"; readonly count: number }
+  | { readonly kind: "tribute-matching-face-up-card"; readonly cardId: string; readonly count: number }
   | { readonly kind: "tribute-source" }
   | { readonly kind: "remove-counter-from-source"; readonly counterType: string; readonly count: number }
   | { readonly kind: "pay-lp"; readonly amount: number }
   | { readonly kind: "send-to-graveyard"; readonly count: number }
   | { readonly kind: "banish-from-graveyard"; readonly count: number }
-  | { readonly kind: "reveal"; readonly count: number };
+  | { readonly kind: "reveal"; readonly count: number }
+  | { readonly kind: "return-to-hand"; readonly count: number };
 
 export interface CostPayment {
   readonly instanceIds?: readonly InstanceId[];
@@ -109,9 +113,11 @@ export function payCosts(
       }
       case "discard":
       case "tribute":
+      case "tribute-matching-face-up-card":
       case "send-to-graveyard":
       case "banish-from-graveyard":
-      case "reveal": {
+      case "reveal":
+      case "return-to-hand": {
         const selected = instanceIds.slice(paymentIndex, paymentIndex + cost.count);
         paymentIndex += cost.count;
 
@@ -119,7 +125,9 @@ export function payCosts(
           return invalid(nextState, paidCosts, `Cost requires exactly ${cost.count} card(s).`);
         }
 
-        const paid = payCardCost(nextState, playerId, cost.kind, selected);
+        const paid = cost.kind === "tribute-matching-face-up-card"
+          ? payMatchingFaceUpTributeCost(nextState, playerId, cost.cardId, selected)
+          : payCardCost(nextState, playerId, cost.kind, selected);
 
         if (!paid.valid) {
           return invalid(nextState, paidCosts, paid.reason ?? "Cost could not be paid.");
@@ -142,7 +150,7 @@ export function payCosts(
 function payCardCost(
   state: DuelState,
   playerId: PlayerId,
-  kind: Exclude<CostKind, "none" | "pay-lp" | "tribute-source" | "remove-counter-from-source">,
+  kind: Exclude<CostKind, "none" | "pay-lp" | "tribute-source" | "remove-counter-from-source" | "tribute-matching-face-up-card">,
   instanceIds: readonly InstanceId[],
 ): PayCostsResult {
   let nextState = state;
@@ -169,6 +177,15 @@ function payCardCost(
       continue;
     }
 
+    if (kind === "return-to-hand") {
+      nextState = moveCard(nextState, located.ref, {
+        playerId: located.card.owner,
+        zone: "hand",
+        index: nextState.players[located.card.owner].hand.length,
+      });
+      continue;
+    }
+
     const destination = destinationForCost(kind, playerId);
 
     nextState = moveCard(nextState, located.ref, destination, {
@@ -185,7 +202,7 @@ function payCardCost(
 }
 
 function validateCostZone(
-  kind: Exclude<CostKind, "none" | "pay-lp" | "tribute-source" | "remove-counter-from-source">,
+  kind: Exclude<CostKind, "none" | "pay-lp" | "tribute-source" | "remove-counter-from-source" | "tribute-matching-face-up-card">,
   ref: ZoneRef,
 ): string | null {
   switch (kind) {
@@ -203,11 +220,15 @@ function validateCostZone(
       return ["hand", "monsterZone", "spellTrapZone", "fieldZone"].includes(ref.zone)
         ? null
         : "Reveal costs must use a card from hand or field.";
+    case "return-to-hand":
+      return ["monsterZone", "spellTrapZone", "fieldZone"].includes(ref.zone)
+        ? null
+        : "Return costs must use a card from the field.";
   }
 }
 
 function destinationForCost(
-  kind: Exclude<CostKind, "none" | "pay-lp" | "reveal" | "tribute-source" | "remove-counter-from-source">,
+  kind: Exclude<CostKind, "none" | "pay-lp" | "reveal" | "return-to-hand" | "tribute-source" | "remove-counter-from-source" | "tribute-matching-face-up-card">,
   playerId: PlayerId,
 ): ZoneRef {
   switch (kind) {
@@ -218,6 +239,37 @@ function destinationForCost(
     case "banish-from-graveyard":
       return { playerId, zone: "banished", index: 0 };
   }
+}
+
+function payMatchingFaceUpTributeCost(
+  state: DuelState,
+  playerId: PlayerId,
+  cardId: string,
+  instanceIds: readonly InstanceId[],
+): PayCostsResult {
+  const uniqueInstanceIds = new Set(instanceIds);
+
+  if (uniqueInstanceIds.size !== instanceIds.length) {
+    return invalid(state, [], "Tribute costs require distinct monsters.");
+  }
+
+  for (const instanceId of instanceIds) {
+    const located = findCardByInstanceId(state, instanceId);
+
+    if (!located) {
+      return invalid(state, [], "Cost card was not found.");
+    }
+
+    if (located.ref.playerId !== playerId || located.ref.zone !== "monsterZone") {
+      return invalid(state, [], "Tribute costs must use monsters controlled by the paying player.");
+    }
+
+    if (!("face" in located.card) || located.card.face !== "faceUp" || located.card.cardId !== cardId) {
+      return invalid(state, [], "Tribute costs must use matching face-up monsters.");
+    }
+  }
+
+  return payCardCost(state, playerId, "tribute", instanceIds);
 }
 
 function removeCounterCost(
@@ -305,6 +357,7 @@ function replaceLocatedZoneCard(state: DuelState, ref: ZoneRef, card: NonNullabl
         },
       };
     case "mainDeck":
+    case "fusionDeck":
     case "hand":
     case "graveyard":
     case "banished":
@@ -313,7 +366,7 @@ function replaceLocatedZoneCard(state: DuelState, ref: ZoneRef, card: NonNullabl
 }
 
 function revealCostCard(state: DuelState, ref: ZoneRef): DuelState {
-  if (ref.zone === "hand" || ref.zone === "mainDeck") {
+  if (ref.zone === "hand" || ref.zone === "mainDeck" || ref.zone === "fusionDeck") {
     return state;
   }
 

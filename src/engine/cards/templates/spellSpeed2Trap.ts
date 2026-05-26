@@ -2,43 +2,34 @@ import type {
   CardScript,
   EffectResolutionDefinition,
   EffectResolutionStep,
-  OncePerTurnDefinition,
 } from "../CardScript";
 import type { CostSpec } from "../../effects/costs";
 import type { TargetSpec } from "../../effects/targets";
 
-export interface NormalSpellTemplateConfig {
+export interface SpellSpeed2TrapTemplateConfig {
   readonly cardId: string;
   readonly effectId?: string;
   readonly costs?: readonly CostSpec[];
   readonly targets?: readonly TargetSpec[];
-  readonly oncePerTurn?: OncePerTurnDefinition;
-  readonly cannotBeNegated?: boolean;
   readonly steps: readonly EffectResolutionStep[];
 }
 
-export function createNormalSpellScript(config: NormalSpellTemplateConfig): CardScript {
+export function createSpellSpeed2TrapScript(config: SpellSpeed2TrapTemplateConfig): CardScript {
   return Object.freeze({
     cardId: config.cardId,
     effects: Object.freeze([
       Object.freeze({
         id: config.effectId ?? "activate",
-        kind: "ignition",
+        kind: "quick",
         implemented: true,
-        spellSpeed: 1,
+        spellSpeed: 2,
         costs: config.costs,
         targets: config.targets,
-        oncePerTurn: config.oncePerTurn,
-        cannotBeNegated: config.cannotBeNegated,
-        resolution: createSpellResolution(config.steps),
+        resolution: Object.freeze({
+          steps: Object.freeze([...config.steps]),
+          sendSourceToGraveyard: true,
+        }),
       }),
     ]),
-  });
-}
-
-function createSpellResolution(steps: readonly EffectResolutionStep[]): EffectResolutionDefinition {
-  return Object.freeze({
-    steps: Object.freeze([...steps]),
-    sendSourceToGraveyard: true,
   });
 }

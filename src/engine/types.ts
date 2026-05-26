@@ -45,6 +45,7 @@ export interface DuelZoneCard {
   faceDown: boolean;
   position: BattlePosition;
   status: "set" | "summoned" | "activated" | "token";
+  counters?: Readonly<Record<string, number>>;
 }
 
 export interface DuelPlayerState {
@@ -171,6 +172,7 @@ export interface SerializedCard {
   faceDown: boolean;
   position: BattlePosition;
   status: DuelZoneCard["status"];
+  counters: Readonly<Record<string, number>>;
 }
 
 export interface SerializedPlayerState {
@@ -254,7 +256,13 @@ export type {
   DestructionReplacementInput as CoreDestructionReplacementInput,
   DestructionReplacementResult as CoreDestructionReplacementResult,
   DestructionReplacementSpec as CoreDestructionReplacementSpec,
+  PreventionReplacementKind as CorePreventionReplacementKind,
+  PreventionReplacementSpec as CorePreventionReplacementSpec,
+  ReplacementAction as CoreReplacementAction,
   ReplacementEffectDefinition as CoreReplacementEffectDefinition,
+  ReplacementInput as CoreReplacementInput,
+  ReplacementKind as CoreReplacementKind,
+  ReplacementResult as CoreReplacementResult,
 } from "./effects/replacement";
 export type {
   DamageStepEffectKind as CoreDamageStepEffectKind,

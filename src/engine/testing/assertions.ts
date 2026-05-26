@@ -63,6 +63,8 @@ function cardInZone(state: DuelState, ref: ZoneRef): CardInstance | ZoneCard | n
   switch (ref.zone) {
     case "mainDeck":
       return player.mainDeck[ref.index] ?? null;
+    case "fusionDeck":
+      return player.fusionDeck?.[ref.index] ?? null;
     case "hand":
       return player.hand[ref.index] ?? null;
     case "monsterZone":

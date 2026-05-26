@@ -6,9 +6,10 @@ import { isPlayableCard } from "../cards/coverage";
 import { createCardScriptRegistry } from "../cards/registry";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
-import type { EngineEventType } from "../events";
+import type { EngineEvent, EngineEventType } from "../events";
 import { createDuel, reduceDuel } from "../reducer";
 import type { ChainLink } from "../rules/chain";
+import { collectTriggerCandidates } from "../rules/triggers";
 
 const cards = cardsJson as CardRecord[];
 const TURN_PLAYER_TRIGGER_ID = "05053103";
@@ -151,6 +152,57 @@ describe("simple trigger collection", () => {
     });
   });
 
+  it("lets optional when triggers miss timing when their event is not the last event in the batch", () => {
+    const state = stateWithScripts([
+      triggerScript(TURN_PLAYER_TRIGGER_ID, "optional-when-sent", "after-action", ["card-moved"], {
+        optional: true,
+        missesTimingIfNotLast: true,
+        sourceEvent: "self",
+        fromZones: ["monsterZone"],
+        toZones: ["graveyard"],
+      }),
+    ]);
+    const postState = withP1GraveyardTrigger(state);
+    const sentSelf = movedSelfToGraveyardEvent("event-1");
+    const laterEvent: EngineEvent = {
+      id: "event-2",
+      type: "card-drawn",
+      message: "P1 drew a card.",
+      playerId: "P1",
+      instanceId: "drawn-card",
+      cardId: OPPONENT_TRIGGER_ID,
+    };
+
+    expect(collectTriggerCandidates(postState, [sentSelf, laterEvent], "after-action")).toEqual([]);
+    expect(collectTriggerCandidates(postState, [laterEvent, sentSelf], "after-action")).toHaveLength(1);
+  });
+
+  it("keeps source memory for a self trigger after the source leaves the field", () => {
+    const state = stateWithScripts([
+      triggerScript(TURN_PLAYER_TRIGGER_ID, "sent-from-field", "after-action", ["card-moved"], {
+        sourceEvent: "self",
+        fromZones: ["monsterZone"],
+        toZones: ["graveyard"],
+      }),
+    ]);
+    const postState = withP1GraveyardTrigger(state);
+    const candidates = collectTriggerCandidates(postState, [movedSelfToGraveyardEvent("event-1")], "after-action");
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      playerId: "P1",
+      sourceInstanceId: "p1-leaving-trigger",
+      cardId: TURN_PLAYER_TRIGGER_ID,
+      effectId: "sent-from-field",
+      triggerEvent: {
+        type: "card-moved",
+        instanceId: "p1-leaving-trigger",
+        from: { playerId: "P1", zone: "monsterZone", index: 2 },
+        to: { playerId: "P1", zone: "graveyard", index: 0 },
+      },
+    });
+  });
+
   it("collects mandatory triggers after chain resolution", () => {
     const state = stateWithScripts([
       noOpScript(TURN_PLAYER_TRIGGER_ID, "existing-effect"),
@@ -216,6 +268,14 @@ function stateWithScripts(scripts: readonly CardScript[]): DuelState {
   };
 }
 
+interface TriggerScriptOptions {
+  readonly optional?: boolean;
+  readonly missesTimingIfNotLast?: boolean;
+  readonly sourceEvent?: "self" | "any";
+  readonly fromZones?: readonly ("monsterZone" | "graveyard")[];
+  readonly toZones?: readonly ("monsterZone" | "graveyard")[];
+}
+
 function advanceToM1(state: DuelState): DuelState {
   const standby = reduceDuel(state, { type: "change-phase", playerId: "P1", phase: "SP" }).state;
 
@@ -227,8 +287,10 @@ function triggerScript(
   effectId: string,
   timing: "after-action" | "chain-resolved",
   eventTypes: readonly EngineEventType[],
-  optional = false,
+  options: boolean | TriggerScriptOptions = false,
 ): CardScript {
+  const triggerOptions: TriggerScriptOptions = typeof options === "boolean" ? { optional: options } : options;
+
   return {
     cardId,
     effects: [
@@ -240,7 +302,11 @@ function triggerScript(
         trigger: {
           timing,
           eventTypes,
-        optional,
+          optional: triggerOptions.optional,
+          missesTimingIfNotLast: triggerOptions.missesTimingIfNotLast,
+          sourceEvent: triggerOptions.sourceEvent,
+          fromZones: triggerOptions.fromZones,
+          toZones: triggerOptions.toZones,
         },
         resolution: {
           steps: [],
@@ -248,6 +314,41 @@ function triggerScript(
         },
       },
     ],
+  };
+}
+
+function withP1GraveyardTrigger(state: DuelState): DuelState {
+  return {
+    ...state,
+    players: {
+      ...state.players,
+      P1: {
+        ...state.players.P1,
+        graveyard: [zoneCard("p1-leaving-trigger", TURN_PLAYER_TRIGGER_ID, "P1", { position: null })],
+      },
+    },
+  };
+}
+
+function movedSelfToGraveyardEvent(id: string): EngineEvent {
+  return {
+    id,
+    type: "card-moved",
+    message: "P1 moved a trigger source from the field to the Graveyard.",
+    playerId: "P1",
+    instanceId: "p1-leaving-trigger",
+    cardId: TURN_PLAYER_TRIGGER_ID,
+    owner: "P1",
+    controller: "P1",
+    from: { playerId: "P1", zone: "monsterZone", index: 2 },
+    to: { playerId: "P1", zone: "graveyard", index: 0 },
+    visibility: "public",
+    reason: "effect",
+    phase: "M1",
+    chainDepth: 0,
+    metadata: {
+      reason: "effect",
+    },
   };
 }
 

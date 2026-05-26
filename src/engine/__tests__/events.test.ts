@@ -29,6 +29,7 @@ describe("typed engine events", () => {
       "card-moved",
       "summon-declared",
       "summon-successful",
+      "monster-flipped-face-up",
       "monster-set",
       "spell-trap-set",
       "position-changed",
@@ -51,7 +52,7 @@ describe("typed engine events", () => {
       "illegal-action",
       "effect-not-implemented",
     ]);
-    expect(eventMessages(events)).toHaveLength(28);
+    expect(eventMessages(events)).toHaveLength(29);
     expect(events.every((event) => event.message.trim().length > 0)).toBe(true);
   });
 
@@ -61,8 +62,14 @@ describe("typed engine events", () => {
     expect(events["card-moved"]).toMatchObject({
       instanceId: "inst-battle-ox",
       cardId: "05053103",
+      owner: "P1",
+      controller: "P1",
       from: handRef,
       to: monsterRef,
+      visibility: "public",
+      reason: "normal-summon",
+      phase: "M1",
+      chainDepth: 0,
     });
     expect(events["lp-changed"]).toMatchObject({
       previous: 8000,
@@ -143,8 +150,14 @@ function requiredEvents(): Record<CoreTypedEngineEventType, CoreTypedEngineEvent
       playerId: "P1",
       instanceId: "inst-battle-ox",
       cardId: "05053103",
+      owner: "P1",
+      controller: "P1",
       from: handRef,
       to: monsterRef,
+      visibility: "public",
+      reason: "normal-summon",
+      phase: "M1",
+      chainDepth: 0,
     },
     "summon-declared": {
       id: "event-6",
@@ -164,6 +177,16 @@ function requiredEvents(): Record<CoreTypedEngineEventType, CoreTypedEngineEvent
       cardId: "05053103",
       zone: monsterRef,
       summonKind: "normal",
+    },
+    "monster-flipped-face-up": {
+      id: "event-7b",
+      type: "monster-flipped-face-up",
+      message: "A monster was flipped face-up.",
+      playerId: "P1",
+      instanceId: "inst-set-monster",
+      cardId: "00000001",
+      zone: monsterRef,
+      reason: "effect",
     },
     "monster-set": {
       id: "event-8",

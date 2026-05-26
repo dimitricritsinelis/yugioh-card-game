@@ -53,7 +53,7 @@ describe("deck validation", () => {
     const nonFusion = cardByName("Battle Ox").passcode;
 
     expect(validateDeck(deckWith(["Thousand-Eyes Restrict"]), cards).errors.join(" ")).toContain(
-      "Extra/Fusion Decks are outside playable scope",
+      "Thousand-Eyes Restrict is a Fusion Monster and must be placed in the Extra Deck.",
     );
 
     expect(
@@ -483,6 +483,14 @@ describe("duel core rules", () => {
       faceDown: true,
       position: "defense",
       status: "set",
+      counters: { spell: 1 },
+    };
+    state.players.P1.monsterZones[0] = {
+      instance: state.players.P1.hand[0],
+      faceDown: false,
+      position: "attack",
+      status: "summoned",
+      counters: { spell: 2 },
     };
 
     const view = serializeDuel(state, "P1");
@@ -490,6 +498,8 @@ describe("duel core rules", () => {
     expect(view.players.P1.hand[0].card).not.toBeNull();
     expect(view.players.P2.hand[0].card).toBeNull();
     expect(view.players.P2.monsterZones[0]?.card).toBeNull();
+    expect(view.players.P2.monsterZones[0]?.counters).toEqual({});
+    expect(view.players.P1.monsterZones[0]?.counters).toEqual({ spell: 2 });
   });
 
   it("resolves a basic battle and the GOAT 0 ATK vs 0 ATK destruction rule", () => {

@@ -1186,6 +1186,7 @@ function corePlayerFromLegacy(player: DuelPlayerState, turn = 0): CoreDuelState[
     id: player.id,
     lp: player.lp,
     mainDeck: player.deck.map(coreInstanceFromLegacy),
+    fusionDeck: [],
     hand: player.hand.map(coreInstanceFromLegacy),
     monsterZones: player.monsterZones.map((zone) => coreZoneFromLegacy(zone, turn)),
     spellTrapZones: player.spellTrapZones.map((zone) => coreZoneFromLegacy(zone, turn)),
@@ -1249,6 +1250,7 @@ function legacyZoneFromCore(
     faceDown: card.face === "faceDown",
     position: card.position ?? "attack",
     status: card.face === "faceDown" ? "set" : card.position ? "summoned" : "activated",
+    counters: { ...card.counters },
   };
 }
 
@@ -1262,7 +1264,7 @@ function coreZoneFromLegacy(zone: DuelZoneCard | null, turn = 0): CoreZoneCard |
     face: zone.faceDown ? "faceDown" : "faceUp",
     position: zone.status === "activated" ? null : zone.position,
     visibility: zone.faceDown ? "hidden" : "public",
-    counters: {},
+    counters: { ...(zone.counters ?? {}) },
     attachments: [],
     summonedTurn: zone.instance.summonedTurn,
     positionChangedTurn: zone.instance.positionChangedTurn,
@@ -1708,6 +1710,7 @@ function serializeZone(zone: DuelZoneCard | null, revealControllerInfo: boolean)
     faceDown: zone.faceDown,
     position: zone.position,
     status: zone.status,
+    counters: revealCard ? { ...(zone.counters ?? {}) } : {},
   };
 }
 

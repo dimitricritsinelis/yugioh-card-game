@@ -4,6 +4,7 @@ import type { PlayerId } from "../types";
 export type InstanceId = string;
 export type ZoneKind =
   | "mainDeck"
+  | "fusionDeck"
   | "hand"
   | "monsterZone"
   | "spellTrapZone"
@@ -13,7 +14,17 @@ export type ZoneKind =
 export type FaceState = "faceDown" | "faceUp";
 export type MonsterPosition = "attack" | "defense";
 export type CardVisibility = "public" | "controller" | "owner" | "hidden";
-export type AttachmentLeaveBehavior = "destroy-linked" | "return-control";
+export type AttachmentLeaveBehavior = "destroy-linked" | "return-control" | "detach-linked";
+
+export interface TokenData {
+  readonly name: string;
+  readonly monsterType: string;
+  readonly attribute: string;
+  readonly level: number;
+  readonly atk: number;
+  readonly def: number;
+  readonly cannotBeTributedForTributeSummon?: boolean;
+}
 
 export interface CardInstance {
   readonly instanceId: InstanceId;
@@ -33,14 +44,20 @@ export interface ZoneCard {
   readonly counters: Readonly<Record<string, number>>;
   readonly attachments: readonly InstanceId[];
   readonly attachmentBehaviors?: Readonly<Record<InstanceId, AttachmentLeaveBehavior>>;
+  readonly effectMarkers?: readonly string[];
+  readonly sentToGraveyardTurn?: number;
+  readonly sentToGraveyardFromController?: PlayerId;
+  readonly sentToGraveyardFromZone?: ZoneKind;
   readonly summonedTurn?: number | null;
   readonly setTurn?: number | null;
   readonly positionChangedTurn?: number | null;
   readonly attackedTurn?: number | null;
+  readonly token?: TokenData;
 }
 
 export type ZoneRef =
   | { readonly playerId: PlayerId; readonly zone: "mainDeck"; readonly index: number }
+  | { readonly playerId: PlayerId; readonly zone: "fusionDeck"; readonly index: number }
   | { readonly playerId: PlayerId; readonly zone: "hand"; readonly index: number }
   | { readonly playerId: PlayerId; readonly zone: "monsterZone"; readonly index: number }
   | { readonly playerId: PlayerId; readonly zone: "spellTrapZone"; readonly index: number }
