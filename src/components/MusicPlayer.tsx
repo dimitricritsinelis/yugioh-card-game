@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { Volume2, VolumeX } from "lucide-react";
 
 const TRACKS = [
@@ -9,7 +10,18 @@ const TRACKS = [
 const DEFAULT_VOLUME = 0.03;
 const CROSSFADE_MS = 4000;
 
-export function MusicPlayer() {
+export interface MusicPlayerHandle {
+  start: () => void;
+  toggleMute: () => void;
+}
+
+interface MusicPlayerProps {
+  ref?: Ref<MusicPlayerHandle>;
+  autoStart?: boolean;
+  portalTarget?: HTMLElement | null;
+}
+
+export function MusicPlayer({ ref, autoStart = true, portalTarget = null }: MusicPlayerProps) {
   const audioRefs = useRef<HTMLAudioElement[]>([]);
   const activeIndexRef = useRef(0);
   const fadeFrameRef = useRef<number | null>(null);
@@ -20,7 +32,6 @@ export function MusicPlayer() {
   const mutedRef = useRef(false);
 
   const [isPlaying, setIsPlaying] = useState(false);
-  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
 
   const stopFade = useCallback(() => {
@@ -49,7 +60,6 @@ export function MusicPlayer() {
 
       stopFade();
       activeIndexRef.current = nextIndex;
-      setAutoplayBlocked(false);
 
       nextAudio.currentTime = 0;
       applyAudibleVolume(nextAudio, crossfade ? 0 : 1);
@@ -64,7 +74,6 @@ export function MusicPlayer() {
           .catch(() => {
             playingRef.current = false;
             setIsPlaying(false);
-            setAutoplayBlocked(true);
           });
       }
 
@@ -122,12 +131,10 @@ export function MusicPlayer() {
         .then(() => {
           playingRef.current = true;
           setIsPlaying(true);
-          setAutoplayBlocked(false);
         })
         .catch(() => {
           playingRef.current = false;
           setIsPlaying(false);
-          setAutoplayBlocked(true);
         });
     }
   }, [applyAudibleVolume, stopFade]);
@@ -150,7 +157,9 @@ export function MusicPlayer() {
     };
 
     audios.forEach((audio) => audio.addEventListener("ended", handleEnded));
-    startPlayback();
+    if (autoStart) {
+      startPlayback();
+    }
 
     return () => {
       if (monitorFrameRef.current !== null) {
@@ -164,7 +173,16 @@ export function MusicPlayer() {
         audio.pause();
       });
     };
-  }, [playSequentialTrack, startPlayback]);
+  }, [autoStart, playSequentialTrack, startPlayback]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      start: startPlayback,
+      toggleMute: () => setMuted((current) => !current),
+    }),
+    [startPlayback],
+  );
 
   useEffect(() => {
     const monitor = () => {
@@ -202,7 +220,7 @@ export function MusicPlayer() {
   }, [applyAudibleVolume, muted]);
 
   function handleMuteClick() {
-    if (!playingRef.current && autoplayBlocked) {
+    if (!playingRef.current) {
       startPlayback();
       return;
     }
@@ -210,20 +228,28 @@ export function MusicPlayer() {
     setMuted((current) => !current);
   }
 
-  const buttonLabel = autoplayBlocked && !isPlaying ? "Start music" : muted ? "Unmute" : "Mute";
-  const ariaLabel =
-    autoplayBlocked && !isPlaying
-      ? "Start background music"
-      : muted
-        ? "Unmute background music"
-        : "Mute background music";
+  const buttonLabel = !isPlaying ? "Start music" : muted ? "Unmute" : "Mute";
+  const ariaLabel = !isPlaying
+    ? "Start background music"
+    : muted
+      ? "Unmute background music"
+      : "Mute background music";
+
+  const muteButton = (
+    <button
+      type="button"
+      className="rail-btn music-mute-btn"
+      onClick={handleMuteClick}
+      aria-label={ariaLabel}
+    >
+      {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+      {buttonLabel}
+    </button>
+  );
 
   return (
     <div className="music-player">
-      <button type="button" className="rail-btn music-mute-btn" onClick={handleMuteClick} aria-label={ariaLabel}>
-        {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-        {buttonLabel}
-      </button>
+      {portalTarget ? createPortal(muteButton, portalTarget) : muteButton}
 
       <div className="music-audio-sources" aria-hidden="true">
         {TRACKS.map((track, index) => (

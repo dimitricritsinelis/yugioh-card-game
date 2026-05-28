@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Maximize, Minimize, RotateCcw } from "lucide-react";
+import { ArrowLeft, Maximize, Minimize, RotateCcw } from "lucide-react";
 
 interface ActionPanelProps {
-  onReset: () => void;
+  onReset?: () => void;
+  onLeave?: () => void;
 }
 
-export function ActionPanel({ onReset }: ActionPanelProps) {
+export function ActionPanel({ onReset, onLeave }: ActionPanelProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
@@ -29,10 +30,18 @@ export function ActionPanel({ onReset }: ActionPanelProps) {
         {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
         {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
       </button>
-      <button type="button" className="rail-btn" onClick={onReset}>
-        <RotateCcw size={15} />
-        Reset Duel
-      </button>
+      {onReset ? (
+        <button type="button" className="rail-btn" onClick={onReset}>
+          <RotateCcw size={15} />
+          Reset Duel
+        </button>
+      ) : null}
+      {onLeave ? (
+        <button type="button" className="rail-btn" onClick={onLeave}>
+          <ArrowLeft size={15} />
+          Leave Duel
+        </button>
+      ) : null}
     </div>
   );
 }

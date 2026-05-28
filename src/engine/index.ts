@@ -179,6 +179,7 @@ export type {
   DuelState,
   DuelZoneCard,
   OpponentBehavior,
+  OverrideCardDestination,
   PassiveBoardFillerOptions,
   PlayerId,
   SerializedCard,

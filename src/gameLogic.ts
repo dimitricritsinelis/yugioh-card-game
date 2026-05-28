@@ -7,8 +7,11 @@ import {
   runPassiveBoardFillerOpponentTurn,
   validateDeck,
   type DeckList,
+  type OverrideCardDestination,
   type ChainLink,
   type DuelAction,
+  type DuelCardInstance,
+  type DuelZoneCard,
   type DuelPrompt,
   type DuelState,
   type OpponentBehavior,
@@ -89,6 +92,22 @@ export interface PromptView {
   candidates: PromptSelectionCandidate[];
 }
 
+export type OverrideCardLocation =
+  | { area: "deck"; index: number }
+  | { area: "hand"; index: number }
+  | { area: "monsterZone"; index: number }
+  | { area: "spellTrapZone"; index: number }
+  | { area: "graveyard"; index: number }
+  | { area: "banished"; index: number };
+
+export interface OverrideCardEntry {
+  instanceId: string;
+  card: CardRecord;
+  copyLabel: string;
+  location: OverrideCardLocation;
+  locationLabel: string;
+}
+
 export interface FrontendDeckSelectionValidation {
   readonly valid: boolean;
   readonly errors: readonly string[];
@@ -112,6 +131,7 @@ interface CreateInitialGameStateOptions {
   rng?: Rng;
   seed?: string;
   suppressWarnings?: boolean;
+  viewerId?: PlayerId;
 }
 
 export function createInitialGameState(cards: CardRecord[], options: CreateInitialGameStateOptions = {}): GameState {
@@ -119,6 +139,7 @@ export function createInitialGameState(cards: CardRecord[], options: CreateIniti
     return createEmptyFrontendGameState();
   }
 
+  const viewerId = options.viewerId ?? "P1";
   const assignment = options.decks ? null : assignRandomPlayableDecksToDuel(cards, options.rng ?? Math.random);
   const decks = options.decks ?? assignment?.decks;
   const opponentBehavior = options.opponentBehavior ?? "none";
@@ -139,17 +160,29 @@ export function createInitialGameState(cards: CardRecord[], options: CreateIniti
     decks,
     allowUnsupportedCards: options.allowUnsupportedCards === true,
   });
-  const beforeHand = engine.players.P1.hand.map((card) => card.instanceId);
-  const readyEngine = advanceToNextDecision(engine, "P1").state;
-  const drawnCard = readyEngine.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
+  const beforeHand = engine.players[viewerId].hand.map((card) => card.instanceId);
+  const readyEngine = advanceToNextDecision(engine, viewerId).state;
+  const drawnCard = readyEngine.players[viewerId].hand.find((card) => !beforeHand.includes(card.instanceId));
 
-  return projectEngineToGameState(readyEngine, {
-    selectedCardId: readyEngine.players.P1.hand[0]?.instanceId ?? null,
-    lastDrawnCardId: drawnCard?.instanceId ?? null,
-    lastPlacedCardId: null,
-    opponentBehavior,
-    opponentTargetMonsterCount,
-  });
+  return projectEngineToGameState(
+    readyEngine,
+    {
+      selectedCardId: readyEngine.players[viewerId].hand[0]?.instanceId ?? null,
+      lastDrawnCardId: drawnCard?.instanceId ?? null,
+      lastPlacedCardId: null,
+      opponentBehavior,
+      opponentTargetMonsterCount,
+    },
+    viewerId,
+  );
+}
+
+function getViewerId(state: GameState): PlayerId {
+  return state.viewerId ?? "P1";
+}
+
+function getOpposingPlayerId(viewerId: PlayerId): PlayerId {
+  return viewerId === "P1" ? "P2" : "P1";
 }
 
 export function validateFrontendDeckSelection(
@@ -259,36 +292,50 @@ export function continueTurnFlow(state: GameState): GameState {
     return state;
   }
 
-  const beforeHand = state.engine.players.P1.hand.map((card) => card.instanceId);
+  const viewer = getViewerId(state);
+  const beforeHand = state.engine.players[viewer].hand.map((card) => card.instanceId);
   let engine: DuelState;
 
   if (state.phase === "M1") {
     engine = canEnterBattle(state)
-      ? applyAction(state.engine, { type: "advance-phase", playerId: "P1" }).state
-      : applyAction(state.engine, { type: "end-turn", playerId: "P1" }).state;
+      ? applyAction(state.engine, { type: "advance-phase", playerId: viewer }).state
+      : applyAction(state.engine, { type: "end-turn", playerId: viewer }).state;
   } else if (state.phase === "BP") {
-    engine = applyAction(state.engine, { type: "advance-phase", playerId: "P1" }).state;
+    engine = applyAction(state.engine, { type: "advance-phase", playerId: viewer }).state;
   } else if (state.phase === "M2") {
-    engine = applyAction(state.engine, { type: "end-turn", playerId: "P1" }).state;
+    engine = applyAction(state.engine, { type: "end-turn", playerId: viewer }).state;
   } else {
     engine = applyAction(state.engine, {
       type: state.phase === "EP" ? "end-turn" : "advance-phase",
-      playerId: "P1",
+      playerId: viewer,
     }).state;
   }
 
   engine = runConfiguredOpponentBehavior(engine, state);
 
-  const nextDecision = advanceToNextDecision(engine, "P1").state;
-  const drawnCard = nextDecision.players.P1.hand.find((card) => !beforeHand.includes(card.instanceId));
+  const nextDecision = advanceToNextDecision(engine, viewer).state;
+  const drawnCard = nextDecision.players[viewer].hand.find((card) => !beforeHand.includes(card.instanceId));
 
-  return projectEngineToGameState(nextDecision, {
-    selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
-    lastDrawnCardId: drawnCard?.instanceId ?? null,
-    lastPlacedCardId: null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
+  return projectEngineToGameState(
+    nextDecision,
+    {
+      selectedCardId: drawnCard?.instanceId ?? state.selectedCardId,
+      lastDrawnCardId: drawnCard?.instanceId ?? null,
+      lastPlacedCardId: null,
+      opponentBehavior: state.opponentBehavior,
+      opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+    },
+    viewer,
+  );
+}
+
+export function isViewerActivePlayer(state: GameState): boolean {
+  if (!state.engine) {
+    return false;
+  }
+
+  const viewer = getViewerId(state);
+  return state.engine.activePlayer === viewer && !state.engine.winner;
 }
 
 export function canEnterBattle(state: GameState): boolean {
@@ -296,7 +343,8 @@ export function canEnterBattle(state: GameState): boolean {
     return false;
   }
 
-  return state.engine.players.P1.monsterZones.some(
+  const viewer = getViewerId(state);
+  return state.engine.players[viewer].monsterZones.some(
     (zone) => zone && !zone.faceDown && zone.position === "attack" && !zone.instance.attackedThisTurn,
   );
 }
@@ -322,7 +370,7 @@ export function getLegalPlacementsForCard(state: GameState, cardId: string | nul
     return [];
   }
 
-  return selectLegalPlacementActions(state.engine, "P1", cardId);
+  return selectLegalPlacementActions(state.engine, getViewerId(state), cardId);
 }
 
 export function getUnavailableHandCardIds(state: GameState): string[] {
@@ -330,7 +378,7 @@ export function getUnavailableHandCardIds(state: GameState): string[] {
     return [];
   }
 
-  return selectUnavailableHandCardIds(state.engine, "P1");
+  return selectUnavailableHandCardIds(state.engine, getViewerId(state));
 }
 
 export function getLegalAttackTargetsForCard(
@@ -341,15 +389,16 @@ export function getLegalAttackTargetsForCard(
     return [];
   }
 
-  return selectLegalAttackTargets(state.engine, "P1", attackerId);
+  return selectLegalAttackTargets(state.engine, getViewerId(state), attackerId);
 }
 
 export function getPriorityView(state: GameState): PriorityView {
+  const viewer = getViewerId(state);
   return {
-    currentPlayerId: state.engine?.priorityPlayer ?? "P1",
+    currentPlayerId: state.engine?.priorityPlayer ?? viewer,
     canPass: Boolean(
       state.engine &&
-        state.engine.priorityPlayer === "P1" &&
+        state.engine.priorityPlayer === viewer &&
         state.engine.pendingPrompts.length === 0 &&
         !state.engine.winner,
     ),
@@ -357,6 +406,7 @@ export function getPriorityView(state: GameState): PriorityView {
 }
 
 export function getChainView(state: GameState): ChainView {
+  const viewer = getViewerId(state);
   const links = state.engine?.chain ?? [];
 
   return {
@@ -364,14 +414,15 @@ export function getChainView(state: GameState): ChainView {
     canResolve: Boolean(
       state.engine &&
         links.length > 0 &&
-        state.engine.priorityPlayer === "P1" &&
+        state.engine.priorityPlayer === viewer &&
         state.engine.pendingPrompts.length === 0,
     ),
   };
 }
 
 export function getPromptView(state: GameState): PromptView {
-  const activePrompt = state.engine?.pendingPrompts.find((prompt) => prompt.playerId === "P1") ?? null;
+  const viewer = getViewerId(state);
+  const activePrompt = state.engine?.pendingPrompts.find((prompt) => prompt.playerId === viewer) ?? null;
 
   return {
     activePrompt,
@@ -381,24 +432,47 @@ export function getPromptView(state: GameState): PromptView {
   };
 }
 
+export function getOverrideCardEntries(state: GameState): OverrideCardEntry[] {
+  if (!state.engine) {
+    return [];
+  }
+
+  const viewer = getViewerId(state);
+  const player = state.engine.players[viewer];
+  const entries: OverrideCardEntry[] = [
+    ...player.deck.map((instance, index) => overrideEntry(instance, { area: "deck", index })),
+    ...player.hand.map((instance, index) => overrideEntry(instance, { area: "hand", index })),
+    ...collectOverrideZoneEntries(player.monsterZones, "monsterZone"),
+    ...collectOverrideZoneEntries(player.spellTrapZones, "spellTrapZone"),
+    ...player.graveyard.map((zone, index) => overrideEntry(zone.instance, { area: "graveyard", index })),
+    ...player.banished.map((zone, index) => overrideEntry(zone.instance, { area: "banished", index })),
+  ];
+
+  return entries.sort(compareOverrideEntries);
+}
+
 export function passPriorityForPlayer(state: GameState): GameState {
-  if (!state.engine || state.engine.priorityPlayer !== "P1") {
+  const viewer = getViewerId(state);
+
+  if (!state.engine || state.engine.priorityPlayer !== viewer) {
     return state;
   }
 
-  const result = applyAction(state.engine, { type: "pass-priority", playerId: "P1" });
+  const result = applyAction(state.engine, { type: "pass-priority", playerId: viewer });
 
-  return projectEngineToGameState(result.state, preserveMeta(state));
+  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
 }
 
 export function resolveCurrentChain(state: GameState): GameState {
+  const viewer = getViewerId(state);
+
   if (!state.engine || state.engine.chain.length === 0) {
     return state;
   }
 
-  const result = applyAction(state.engine, { type: "resolve-chain", playerId: "P1" });
+  const result = applyAction(state.engine, { type: "resolve-chain", playerId: viewer });
 
-  return projectEngineToGameState(result.state, preserveMeta(state));
+  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
 }
 
 export function answerActivePrompt(
@@ -409,9 +483,10 @@ export function answerActivePrompt(
     return state;
   }
 
+  const viewer = getViewerId(state);
   const prompt = state.engine.pendingPrompts.find((candidate) => candidate.id === answer.promptId);
 
-  if (!prompt || prompt.playerId !== "P1") {
+  if (!prompt || prompt.playerId !== viewer) {
     return state;
   }
 
@@ -420,7 +495,7 @@ export function answerActivePrompt(
   );
   const result = applyAction(state.engine, {
     type: "answer-prompt",
-    playerId: "P1",
+    playerId: viewer,
     promptId: prompt.id,
     choiceIds: answer.choiceIds,
     targetRefs: prompt.kind === "target" ? selectedCandidates.map((candidate) => candidate.zoneRef) : undefined,
@@ -430,7 +505,7 @@ export function answerActivePrompt(
       prompt.kind === "tribute" ? selectedCandidates.map((candidate) => candidate.instanceId) : undefined,
   });
 
-  return projectEngineToGameState(result.state, preserveMeta(state));
+  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
 }
 
 export function setLifePoints(
@@ -442,21 +517,16 @@ export function setLifePoints(
     return state;
   }
 
-  const targetPlayerId = side === "player" ? "P1" : "P2";
+  const viewer = getViewerId(state);
+  const targetPlayerId = side === "player" ? viewer : getOpposingPlayerId(viewer);
   const result = applyAction(state.engine, {
     type: "set-life-points",
-    playerId: "P1",
+    playerId: viewer,
     targetPlayerId,
     value,
   });
 
-  return projectEngineToGameState(result.state, {
-    selectedCardId: state.selectedCardId,
-    lastDrawnCardId: state.lastDrawnCardId,
-    lastPlacedCardId: state.lastPlacedCardId,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
+  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
 }
 
 export function placeSelectedCard(
@@ -470,9 +540,10 @@ export function placeSelectedCard(
     return state;
   }
 
+  const viewer = getViewerId(state);
   const result = applyAction(state.engine, {
     type: "play-card",
-    playerId: "P1",
+    playerId: viewer,
     instanceId: state.selectedCardId,
     intent: action,
     zoneKind,
@@ -492,13 +563,17 @@ export function placeSelectedCard(
     ].includes(event.type),
   );
 
-  return projectEngineToGameState(result.state, {
-    selectedCardId: state.selectedCardId,
-    lastDrawnCardId: null,
-    lastPlacedCardId: placed ? state.selectedCardId : null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
+  return projectEngineToGameState(
+    result.state,
+    {
+      selectedCardId: state.selectedCardId,
+      lastDrawnCardId: null,
+      lastPlacedCardId: placed ? state.selectedCardId : null,
+      opponentBehavior: state.opponentBehavior,
+      opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+    },
+    viewer,
+  );
 }
 
 export function attackWithSelectedCard(state: GameState, target: LegalAttackTarget): GameState {
@@ -506,15 +581,20 @@ export function attackWithSelectedCard(state: GameState, target: LegalAttackTarg
     return state;
   }
 
+  const viewer = getViewerId(state);
   const result = applyAction(state.engine, target.command);
 
-  return projectEngineToGameState(result.state, {
-    selectedCardId: target.attackerInstanceId,
-    lastDrawnCardId: null,
-    lastPlacedCardId: null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
+  return projectEngineToGameState(
+    result.state,
+    {
+      selectedCardId: target.attackerInstanceId,
+      lastDrawnCardId: null,
+      lastPlacedCardId: null,
+      opponentBehavior: state.opponentBehavior,
+      opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+    },
+    viewer,
+  );
 }
 
 export function sendSelectedToGraveyard(state: GameState): GameState {
@@ -523,6 +603,36 @@ export function sendSelectedToGraveyard(state: GameState): GameState {
 
 export function banishSelected(state: GameState): GameState {
   return moveSelectedCard(state, "banished");
+}
+
+export function overrideCardLocation(
+  state: GameState,
+  instanceId: string,
+  destination: OverrideCardDestination,
+): GameState {
+  if (!state.engine) {
+    return state;
+  }
+
+  const viewer = getViewerId(state);
+  const result = applyAction(state.engine, {
+    type: "override-card-location",
+    playerId: viewer,
+    instanceId,
+    destination,
+  });
+
+  return projectEngineToGameState(
+    result.state,
+    {
+      selectedCardId: instanceId,
+      lastDrawnCardId: null,
+      lastPlacedCardId: null,
+      opponentBehavior: state.opponentBehavior,
+      opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+    },
+    viewer,
+  );
 }
 
 export function getSelectedCardInstance(state: GameState): CardInstance | null {
@@ -542,20 +652,58 @@ function moveSelectedCard(state: GameState, destination: "graveyard" | "banished
     return state;
   }
 
-  const result = applyAction(state.engine, {
-    type: "move-card",
-    playerId: "P1",
-    instanceId: state.selectedCardId,
-    destination,
-  });
+  return overrideCardLocation(state, state.selectedCardId, { zone: destination });
+}
 
-  return projectEngineToGameState(result.state, {
-    selectedCardId: state.selectedCardId,
-    lastDrawnCardId: null,
-    lastPlacedCardId: null,
-    opponentBehavior: state.opponentBehavior,
-    opponentTargetMonsterCount: state.opponentTargetMonsterCount,
-  });
+function collectOverrideZoneEntries(
+  zones: Array<DuelZoneCard | null>,
+  area: "monsterZone" | "spellTrapZone",
+): OverrideCardEntry[] {
+  return zones.flatMap((zone, index) =>
+    zone ? [overrideEntry(zone.instance, { area, index })] : [],
+  );
+}
+
+function overrideEntry(instance: DuelCardInstance, location: OverrideCardLocation): OverrideCardEntry {
+  return {
+    instanceId: instance.instanceId,
+    card: instance.card,
+    copyLabel: `Copy ${copyNumberFromInstanceId(instance.instanceId)}`,
+    location,
+    locationLabel: overrideLocationLabel(location),
+  };
+}
+
+function compareOverrideEntries(first: OverrideCardEntry, second: OverrideCardEntry): number {
+  return (
+    first.card.name.localeCompare(second.card.name) ||
+    first.card.passcode.localeCompare(second.card.passcode) ||
+    copyNumberFromInstanceId(first.instanceId) - copyNumberFromInstanceId(second.instanceId) ||
+    first.instanceId.localeCompare(second.instanceId)
+  );
+}
+
+function copyNumberFromInstanceId(instanceId: string): number {
+  const copy = Number(instanceId.split("-").at(-1));
+
+  return Number.isInteger(copy) && copy > 0 ? copy : 1;
+}
+
+function overrideLocationLabel(location: OverrideCardLocation): string {
+  switch (location.area) {
+    case "deck":
+      return "Deck";
+    case "hand":
+      return "Hand";
+    case "monsterZone":
+      return `Monster Zone ${location.index + 1}`;
+    case "spellTrapZone":
+      return `Spell/Trap Zone ${location.index + 1}`;
+    case "graveyard":
+      return "Graveyard";
+    case "banished":
+      return "Banished";
+  }
 }
 
 function preserveMeta(state: GameState): ProjectionMeta {
@@ -581,7 +729,12 @@ function assertFrontendDeckSelection(
 }
 
 function runConfiguredOpponentBehavior(engine: DuelState, state: GameState): DuelState {
-  if (state.opponentBehavior !== "passive-board-filler" || engine.activePlayer !== "P2") {
+  const viewer = getViewerId(state);
+  if (
+    state.opponentBehavior !== "passive-board-filler" ||
+    viewer !== "P1" ||
+    engine.activePlayer !== "P2"
+  ) {
     return engine;
   }
 
@@ -610,21 +763,24 @@ function collectPromptSelectionCandidates(state: GameState): PromptSelectionCand
     return [];
   }
 
+  const viewer = getViewerId(state);
+  const opponent = getOpposingPlayerId(viewer);
+
   return [
-    ...state.engine.players.P1.hand.map((instance, index) => ({
-      id: candidateId("P1", "hand", index),
+    ...state.engine.players[viewer].hand.map((instance, index) => ({
+      id: candidateId(viewer, "hand", index),
       label: `Hand ${index + 1}: ${instance.card.name}`,
       instanceId: instance.instanceId,
-      zoneRef: { playerId: "P1", zone: "hand", index } satisfies CoreZoneRef,
+      zoneRef: { playerId: viewer, zone: "hand", index } satisfies CoreZoneRef,
     })),
-    ...collectZoneCandidates(state.engine, "P1", "monsterZone"),
-    ...collectZoneCandidates(state.engine, "P1", "spellTrapZone"),
-    ...collectPileCandidates(state.engine, "P1", "graveyard"),
-    ...collectPileCandidates(state.engine, "P1", "banished"),
-    ...collectZoneCandidates(state.engine, "P2", "monsterZone"),
-    ...collectZoneCandidates(state.engine, "P2", "spellTrapZone"),
-    ...collectPileCandidates(state.engine, "P2", "graveyard"),
-    ...collectPileCandidates(state.engine, "P2", "banished"),
+    ...collectZoneCandidates(state.engine, viewer, "monsterZone", viewer),
+    ...collectZoneCandidates(state.engine, viewer, "spellTrapZone", viewer),
+    ...collectPileCandidates(state.engine, viewer, "graveyard", viewer),
+    ...collectPileCandidates(state.engine, viewer, "banished", viewer),
+    ...collectZoneCandidates(state.engine, opponent, "monsterZone", viewer),
+    ...collectZoneCandidates(state.engine, opponent, "spellTrapZone", viewer),
+    ...collectPileCandidates(state.engine, opponent, "graveyard", viewer),
+    ...collectPileCandidates(state.engine, opponent, "banished", viewer),
   ];
 }
 
@@ -632,6 +788,7 @@ function collectZoneCandidates(
   engine: DuelState,
   playerId: PlayerId,
   zone: "monsterZone" | "spellTrapZone",
+  viewer: PlayerId,
 ): PromptSelectionCandidate[] {
   const zones = zone === "monsterZone"
     ? engine.players[playerId].monsterZones
@@ -641,7 +798,7 @@ function collectZoneCandidates(
     zoneCard
       ? [{
           id: candidateId(playerId, zone, index),
-          label: `${playerLabel(playerId)} ${zone === "monsterZone" ? "Monster" : "Spell/Trap"} ${index + 1}: ${zoneCard.faceDown ? "Set card" : zoneCard.instance.card.name}`,
+          label: `${playerLabel(playerId, viewer)} ${zone === "monsterZone" ? "Monster" : "Spell/Trap"} ${index + 1}: ${zoneCard.faceDown ? "Set card" : zoneCard.instance.card.name}`,
           instanceId: zoneCard.instance.instanceId,
           zoneRef: { playerId, zone, index } satisfies CoreZoneRef,
         }]
@@ -653,10 +810,11 @@ function collectPileCandidates(
   engine: DuelState,
   playerId: PlayerId,
   zone: "graveyard" | "banished",
+  viewer: PlayerId,
 ): PromptSelectionCandidate[] {
   return engine.players[playerId][zone].map((zoneCard, index) => ({
     id: candidateId(playerId, zone, index),
-    label: `${playerLabel(playerId)} ${zone === "graveyard" ? "GY" : "Banished"} ${index + 1}: ${zoneCard.instance.card.name}`,
+    label: `${playerLabel(playerId, viewer)} ${zone === "graveyard" ? "GY" : "Banished"} ${index + 1}: ${zoneCard.instance.card.name}`,
     instanceId: zoneCard.instance.instanceId,
     zoneRef: { playerId, zone, index } satisfies CoreZoneRef,
   }));
@@ -666,8 +824,8 @@ function candidateId(playerId: PlayerId, zone: CoreZoneRef["zone"], index: numbe
   return `${playerId}:${zone}:${index}`;
 }
 
-function playerLabel(playerId: PlayerId): string {
-  return playerId === "P1" ? "Player" : "Opponent";
+function playerLabel(playerId: PlayerId, viewer: PlayerId): string {
+  return playerId === viewer ? "Player" : "Opponent";
 }
 
 function deckPlayerLabel(playerId: PlayerId): string {

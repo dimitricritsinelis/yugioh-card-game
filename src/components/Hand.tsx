@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { Ban, Send } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import type { CardInstance } from "../types";
 import { CardView } from "./CardView";
 
@@ -8,10 +8,8 @@ interface HandProps {
   selectedCardId: string | null;
   lastDrawnCardId: string | null;
   unavailableCardIds: string[];
-  debugMoveEnabled?: boolean;
   onSelectCard: (cardId: string) => void;
-  onSendToGraveyard: () => void;
-  onBanish: () => void;
+  onOpenOverride: () => void;
 }
 
 export function Hand({
@@ -19,13 +17,10 @@ export function Hand({
   selectedCardId,
   lastDrawnCardId,
   unavailableCardIds,
-  debugMoveEnabled = false,
   onSelectCard,
-  onSendToGraveyard,
-  onBanish,
+  onOpenOverride,
 }: HandProps) {
   const fanCenter = (cards.length - 1) / 2;
-  const hasSelection = Boolean(selectedCardId);
   const unavailableCards = new Set(unavailableCardIds);
 
   function fanStyle(index: number): CSSProperties & Record<string, string> {
@@ -39,28 +34,12 @@ export function Hand({
 
   return (
     <section className="hand-dock player-accent" aria-label="Player hand">
-      {debugMoveEnabled ? (
-        <div className="hand-actions" aria-label="Debug card movement actions">
-          <button
-            type="button"
-            className="hand-action-btn"
-            onClick={onSendToGraveyard}
-            disabled={!hasSelection}
-          >
-            <Send size={15} />
-            Debug GY
-          </button>
-          <button
-            type="button"
-            className="hand-action-btn"
-            onClick={onBanish}
-            disabled={!hasSelection}
-          >
-            <Ban size={15} />
-            Debug Banish
-          </button>
-        </div>
-      ) : null}
+      <div className="hand-actions" aria-label="Manual card tools">
+        <button type="button" className="hand-action-btn" onClick={onOpenOverride}>
+          <SlidersHorizontal size={15} />
+          Override
+        </button>
+      </div>
 
       <div className="hand-main">
         <div className="hand-fan">

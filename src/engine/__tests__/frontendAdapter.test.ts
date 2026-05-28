@@ -8,12 +8,13 @@ import {
   FrontendDeckSelectionError,
   getChainView,
   getLegalAttackTargetsForCard,
+  getOverrideCardEntries,
   getPriorityView,
   getPromptView,
   passPriorityForPlayer,
   placeSelectedCard,
+  overrideCardLocation,
   resolveCurrentChain,
-  sendSelectedToGraveyard,
   validateFrontendDeckSelection,
 } from "../../gameLogic";
 import type { CardRecord } from "../../types";
@@ -226,12 +227,124 @@ describe("frontend adapter selectors", () => {
     expect(afterAttack.engine!.players.P2.lp).toBeLessThan(8000);
     expect(afterAttack.actionLog.some((entry) => entry.message.includes("attacked directly"))).toBe(true);
 
-    const afterDebugMove = sendSelectedToGraveyard(afterAttack);
+    const afterDebugMove = overrideCardLocation(afterAttack, summon!.instanceId, { zone: "graveyard" });
 
-    expect(afterDebugMove.engine!.players.P1.monsterZones[summon!.zoneIndex]?.instance.instanceId).toBe(
-      summon!.instanceId,
+    expect(afterDebugMove.engine!.players.P1.monsterZones[summon!.zoneIndex]).toBeNull();
+    expect(afterDebugMove.engine!.players.P1.graveyard[0].instance.instanceId).toBe(summon!.instanceId);
+    expect(afterDebugMove.actionLog[0].message).toContain("Override:");
+    expect(afterDebugMove.actionLog[0].message).toContain("to Graveyard");
+  });
+
+  it("lists only the viewer's own 40 cards without exposing deck order labels", () => {
+    const game = createPlayableGame("override-list-security");
+    const entries = getOverrideCardEntries(game);
+
+    expect(entries).toHaveLength(40);
+    expect(entries.every((entry) => entry.instanceId.startsWith("P1-"))).toBe(true);
+    expect(entries.some((entry) => entry.locationLabel === "Deck")).toBe(true);
+    expect(entries.every((entry) => !/^Deck \d/i.test(entry.locationLabel))).toBe(true);
+    expect(entries.map((entry) => entry.card.name)).toEqual(
+      [...entries].map((entry) => entry.card.name).sort((first, second) => first.localeCompare(second)),
     );
-    expect(afterDebugMove.actionLog[0].message).toContain("move-card is not implemented");
+
+    const p2Game = createInitialGameState(cards, {
+      decks: {
+        P1: clonePlayableDeck(YUGI_PLAYABLE_DECK_FIXTURE.deck),
+        P2: clonePlayableDeck(KAIBA_PLAYABLE_DECK_FIXTURE.deck),
+      },
+      seed: "override-list-p2",
+      viewerId: "P2",
+      opponentBehavior: "none",
+      suppressWarnings: true,
+    });
+    const p2Entries = getOverrideCardEntries(p2Game);
+
+    expect(p2Entries).toHaveLength(40);
+    expect(p2Entries.every((entry) => entry.instanceId.startsWith("P2-"))).toBe(true);
+  });
+
+  it("overrides own cards into public repair destinations and keeps a 40-card own list", () => {
+    let game = createPlayableGame("override-destinations");
+    const deckMonster = getOverrideCardEntries(game).find(
+      (entry) => entry.location.area === "deck" && entry.card.category === "Monster",
+    );
+    const deckSpellTrap = getOverrideCardEntries(game).find(
+      (entry) => entry.location.area === "deck" && entry.card.category !== "Monster",
+    );
+
+    expect(deckMonster).toBeDefined();
+    expect(deckSpellTrap).toBeDefined();
+
+    game = overrideCardLocation(game, deckMonster!.instanceId, { zone: "hand" });
+    expect(game.engine!.players.P1.hand.some((card) => card.instanceId === deckMonster!.instanceId)).toBe(true);
+    expect(game.actionLog[0].message).toContain("from Deck to Hand");
+
+    game = overrideCardLocation(game, deckSpellTrap!.instanceId, { zone: "banished" });
+    expect(game.engine!.players.P1.banished[0].instance.instanceId).toBe(deckSpellTrap!.instanceId);
+    expect(game.actionLog[0].message).toContain("to Banished");
+
+    game = overrideCardLocation(game, deckMonster!.instanceId, {
+      zone: "monsterZone",
+      index: 0,
+      face: "faceDown",
+      position: "defense",
+    });
+    expect(game.engine!.players.P1.monsterZones[0]).toMatchObject({
+      faceDown: true,
+      position: "defense",
+      instance: { instanceId: deckMonster!.instanceId },
+    });
+    expect(game.actionLog[0].message).toContain("Monster Zone 1 face-down Defense");
+
+    game = overrideCardLocation(game, deckSpellTrap!.instanceId, {
+      zone: "spellTrapZone",
+      index: 0,
+      face: "faceUp",
+    });
+    expect(game.engine!.players.P1.spellTrapZones[0]).toMatchObject({
+      faceDown: false,
+      status: "activated",
+      instance: { instanceId: deckSpellTrap!.instanceId },
+    });
+    expect(game.actionLog[0].message).toContain("Spell/Trap Zone 1 face-up Activated");
+
+    game = overrideCardLocation(game, deckSpellTrap!.instanceId, { zone: "graveyard" });
+    expect(game.engine!.players.P1.graveyard[0].instance.instanceId).toBe(deckSpellTrap!.instanceId);
+    expect(getOverrideCardEntries(game)).toHaveLength(40);
+  });
+
+  it("rejects opponent-owned cards, occupied board slots, and wrong board zone types", () => {
+    const game = createPlayableGame("override-rejections");
+    const ownMonster = getOverrideCardEntries(game).find((entry) => entry.card.category === "Monster")!;
+    const opponentCard = game.engine!.players.P2.deck[0];
+    const occupied = overrideCardLocation(game, ownMonster.instanceId, {
+      zone: "monsterZone",
+      index: 0,
+      face: "faceUp",
+      position: "attack",
+    });
+
+    const opponentAttempt = overrideCardLocation(game, opponentCard.instanceId, { zone: "hand" });
+    expect(opponentAttempt.actionLog[0].message).toContain("owned by that player");
+
+    const secondMonster = getOverrideCardEntries(occupied).find(
+      (entry) => entry.card.category === "Monster" && entry.instanceId !== ownMonster.instanceId,
+    )!;
+    const occupiedAttempt = overrideCardLocation(occupied, secondMonster.instanceId, {
+      zone: "monsterZone",
+      index: 0,
+      face: "faceUp",
+      position: "attack",
+    });
+    expect(occupiedAttempt.actionLog[0].message).toContain("occupied");
+    expect(occupiedAttempt.engine!.players.P1.monsterZones[0]?.instance.instanceId).toBe(ownMonster.instanceId);
+
+    const wrongZoneAttempt = overrideCardLocation(game, ownMonster.instanceId, {
+      zone: "spellTrapZone",
+      index: 0,
+      face: "faceDown",
+    });
+    expect(wrongZoneAttempt.actionLog[0].message).toContain("Only Spell or Trap Cards");
   });
 
   it("validates default and provided frontend deck selections before starting a duel", () => {

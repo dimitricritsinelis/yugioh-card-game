@@ -5,7 +5,14 @@ import type { EngineCommand } from "./commands";
 import type { AttachmentLeaveBehavior, CardInstance, ZoneCard, ZoneRef } from "./core/cardRefs";
 import { cloneDuelState } from "./core/clone";
 import type { DuelState, PendingAttackState, PlayerState } from "./core/state";
-import { findCardByInstanceId, insertIntoZone, removeFromZone, setCardFace, updateMonsterPosition } from "./core/zones";
+import {
+  findCardByInstanceId,
+  insertIntoZone,
+  removeFromZone,
+  setCardFace,
+  updateMonsterPosition,
+  type ZoneCardOptions,
+} from "./core/zones";
 import type { CardDefinition } from "./data/cardCatalog";
 import { normalizeCard } from "./data/normalizeCard";
 import { validateDeck, type DeckValidationOptions } from "./deckValidation";
@@ -99,7 +106,7 @@ import {
   playerWithZeroLp,
   type LossReason,
 } from "./rules/winConditions";
-import type { DeckList, PlayerId, TurnMode } from "./types";
+import type { DeckList, OverrideCardDestination, PlayerId, TurnMode } from "./types";
 
 const DEFAULT_SEED = "goat-core-duel";
 const STARTING_LIFE_POINTS = 8000;
@@ -223,6 +230,8 @@ export function reduceDuel(state: DuelState, command: EngineCommand): EngineResu
       return answerPrompt(state, command);
     case "set-spell-trap":
       return setSpellTrap(state, command);
+    case "override-card-location":
+      return overrideCardLocation(state, command);
     case "move-card":
       return unimplementedCommand(state, command);
   }
@@ -485,6 +494,60 @@ function setSpellTrap(state: DuelState, command: Extract<EngineCommand, { type: 
   );
 
   return result(command, nextState, [event]);
+}
+
+function overrideCardLocation(
+  state: DuelState,
+  command: Extract<EngineCommand, { type: "override-card-location" }>,
+): EngineResult {
+  if (!isPlayerId(command.playerId)) {
+    return illegalResult(state, command, `Unknown player: ${command.playerId}.`, command.playerId);
+  }
+
+  const located = findCardByInstanceId(state, command.instanceId);
+
+  if (!located) {
+    return illegalResult(state, command, "Selected card was not found.", command.playerId);
+  }
+
+  if (located.card.owner !== command.playerId) {
+    return illegalResult(state, command, "Override can only move cards owned by that player.", command.playerId);
+  }
+
+  const validation = validateOverrideDestination(
+    state,
+    command.playerId,
+    located.ref,
+    located.card.cardId,
+    command.destination,
+  );
+
+  if (validation) {
+    return illegalResult(state, command, validation, command.playerId);
+  }
+
+  const eventBuilder = createEventBuilder(state.eventIds.length);
+  const eventCard = isZoneCard(located.card) ? toPublicZoneCard(located.card) : toPublicEventCard(located.card);
+  const removed = removeFromZone(state, located.ref);
+  const destinationRef = overrideDestinationRef(removed.state, command.playerId, command.destination);
+  const nextState = insertIntoZone(
+    removed.state,
+    destinationRef,
+    withController(removed.card, command.playerId),
+    overrideZoneOptions(command.destination),
+  );
+  const event = createManualOverrideMovedEvent(
+    eventBuilder,
+    command.playerId,
+    eventCard,
+    located.ref,
+    destinationRef,
+    state.turn,
+    state,
+    command.destination,
+  );
+
+  return result(command, appendEventIds(nextState, [event]), [event]);
 }
 
 function flipSummon(state: DuelState, command: Extract<EngineCommand, { type: "flip-summon" }>): EngineResult {
@@ -2398,6 +2461,124 @@ function isZoneCard(card: CardInstance | ZoneCard | null): card is ZoneCard {
   return card !== null && "face" in card;
 }
 
+function validateOverrideDestination(
+  state: DuelState,
+  playerId: PlayerId,
+  sourceRef: ZoneRef,
+  cardId: string,
+  destination: OverrideCardDestination,
+): string | null {
+  const player = state.players[playerId];
+
+  switch (destination.zone) {
+    case "hand":
+    case "graveyard":
+    case "banished":
+      return null;
+    case "monsterZone": {
+      const definition = state.cardDefinitions?.[cardId];
+
+      if (definition?.kind !== "monster") {
+        return "Only Monster Cards can be overridden into a Monster Zone.";
+      }
+
+      if (!isValidOverrideIndex(destination.index, player.monsterZones.length)) {
+        return "Monster Zone index is outside zone bounds.";
+      }
+
+      if (destination.face === "faceDown" && destination.position !== "defense") {
+        return "Face-down monsters must be placed in Defense Position.";
+      }
+
+      const destinationRef: ZoneRef = { playerId, zone: "monsterZone", index: destination.index };
+      const occupied = player.monsterZones[destination.index];
+
+      return occupied && !sameZoneRef(sourceRef, destinationRef) ? "Selected Monster Zone is occupied." : null;
+    }
+    case "spellTrapZone": {
+      const definition = state.cardDefinitions?.[cardId];
+
+      if (!definition || definition.kind === "monster") {
+        return "Only Spell or Trap Cards can be overridden into a Spell/Trap Zone.";
+      }
+
+      if (!isValidOverrideIndex(destination.index, player.spellTrapZones.length)) {
+        return "Spell/Trap Zone index is outside zone bounds.";
+      }
+
+      const destinationRef: ZoneRef = { playerId, zone: "spellTrapZone", index: destination.index };
+      const occupied = player.spellTrapZones[destination.index];
+
+      return occupied && !sameZoneRef(sourceRef, destinationRef) ? "Selected Spell/Trap Zone is occupied." : null;
+    }
+  }
+}
+
+function overrideDestinationRef(
+  state: DuelState,
+  playerId: PlayerId,
+  destination: OverrideCardDestination,
+): ZoneRef {
+  switch (destination.zone) {
+    case "hand":
+      return { playerId, zone: "hand", index: state.players[playerId].hand.length };
+    case "graveyard":
+      return { playerId, zone: "graveyard", index: 0 };
+    case "banished":
+      return { playerId, zone: "banished", index: 0 };
+    case "monsterZone":
+      return { playerId, zone: "monsterZone", index: destination.index };
+    case "spellTrapZone":
+      return { playerId, zone: "spellTrapZone", index: destination.index };
+  }
+}
+
+function overrideZoneOptions(destination: OverrideCardDestination): ZoneCardOptions {
+  switch (destination.zone) {
+    case "monsterZone":
+      return {
+        face: destination.face,
+        position: destination.position,
+        visibility: destination.face === "faceDown" ? "hidden" : "public",
+      };
+    case "spellTrapZone":
+      return {
+        face: destination.face,
+        position: null,
+        visibility: destination.face === "faceDown" ? "hidden" : "public",
+      };
+    case "hand":
+    case "graveyard":
+    case "banished":
+      return {
+        face: "faceUp",
+        position: null,
+        visibility: "public",
+      };
+  }
+}
+
+function withController<T extends CardInstance | ZoneCard>(card: T, controller: PlayerId): T {
+  return {
+    ...card,
+    controller,
+  } as T;
+}
+
+function sameZoneRef(first: ZoneRef, second: ZoneRef): boolean {
+  if (first.playerId !== second.playerId || first.zone !== second.zone) {
+    return false;
+  }
+
+  return "index" in first || "index" in second
+    ? "index" in first && "index" in second && first.index === second.index
+    : true;
+}
+
+function isValidOverrideIndex(index: number, length: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < length;
+}
+
 function playerForSelector(playerId: PlayerId, selector: "self" | "opponent"): PlayerId {
   return selector === "self" ? playerId : opponentOf(playerId);
 }
@@ -3286,6 +3467,73 @@ function createCardMovedEvent(
     turn,
     metadata: { reason },
   };
+}
+
+function createManualOverrideMovedEvent(
+  builder: EventBuilder,
+  playerId: PlayerId,
+  card: ZoneCard,
+  from: ZoneRef,
+  to: ZoneRef,
+  turn: number,
+  state: DuelState,
+  destination: OverrideCardDestination,
+): CardMovedEvent {
+  const cardName = state.cardDefinitions?.[card.cardId]?.display.name ?? `card ${card.cardId}`;
+  const destinationState = overrideDestinationStateLabel(destination);
+  const destinationLabel = `${zoneRefDisplayLabel(to)}${destinationState ? ` ${destinationState}` : ""}`;
+
+  return {
+    id: builder.nextId(),
+    type: "card-moved",
+    message: `Override: ${playerId} moved ${cardName} from ${zoneRefDisplayLabel(from)} to ${destinationLabel}.`,
+    playerId,
+    instanceId: card.instanceId,
+    cardId: card.cardId,
+    from,
+    to,
+    turn,
+    metadata: {
+      reason: "manual-override",
+      override: true,
+      from: zoneRefDisplayLabel(from),
+      to: zoneRefDisplayLabel(to),
+      destinationState: destinationState || null,
+    },
+  };
+}
+
+function zoneRefDisplayLabel(ref: ZoneRef): string {
+  switch (ref.zone) {
+    case "mainDeck":
+      return "Deck";
+    case "hand":
+      return "Hand";
+    case "monsterZone":
+      return `Monster Zone ${ref.index + 1}`;
+    case "spellTrapZone":
+      return `Spell/Trap Zone ${ref.index + 1}`;
+    case "graveyard":
+      return "Graveyard";
+    case "banished":
+      return "Banished";
+    case "fieldZone":
+      return "Field Zone";
+  }
+}
+
+function overrideDestinationStateLabel(destination: OverrideCardDestination): string {
+  if (destination.zone === "monsterZone") {
+    return destination.face === "faceDown"
+      ? "face-down Defense"
+      : `face-up ${destination.position === "attack" ? "Attack" : "Defense"}`;
+  }
+
+  if (destination.zone === "spellTrapZone") {
+    return destination.face === "faceDown" ? "Set" : "face-up Activated";
+  }
+
+  return "";
 }
 
 function createCostPaidEvent(
