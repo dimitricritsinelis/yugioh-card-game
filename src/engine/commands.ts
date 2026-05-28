@@ -1,7 +1,7 @@
 import type { Phase } from "../types";
 import type { InstanceId, MonsterPosition, ZoneRef } from "./core/cardRefs";
 import { PASS_PRIORITY } from "./rules/priority";
-import type { PlayerId } from "./types";
+import type { OverrideCardDestination, PlayerId } from "./types";
 
 export type EngineCommand =
   | { readonly type: "start-duel" }
@@ -61,6 +61,12 @@ export type EngineCommand =
       readonly playerId: PlayerId;
       readonly instanceId: InstanceId;
       readonly destination: ZoneRef;
+    }
+  | {
+      readonly type: "override-card-location";
+      readonly playerId: PlayerId;
+      readonly instanceId: InstanceId;
+      readonly destination: OverrideCardDestination;
     }
   | {
       readonly type: "answer-prompt";

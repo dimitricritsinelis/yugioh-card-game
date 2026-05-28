@@ -1,5 +1,16 @@
 export type CardCategory = "Monster" | "Spell" | "Trap";
 
+export type Screen = "home" | "lobby" | "game" | "spectator";
+
+export type ViewerRole = "P1" | "P2" | "spectator";
+
+export interface SessionState {
+  p1Name: string;
+  p2Name: string;
+  spectatorName: string;
+  viewerRole: ViewerRole;
+}
+
 export type Phase = "DP" | "SP" | "M1" | "BP" | "M2" | "EP";
 
 export type CardAction = "summon" | "set" | "activate";
@@ -82,6 +93,7 @@ export interface ActionLogEntry {
 
 export interface GameState {
   engine?: import("./engine").DuelState;
+  viewerId?: import("./engine").PlayerId;
   opponentBehavior?: import("./engine").OpponentBehavior;
   opponentTargetMonsterCount?: number;
   player: PlayerState;

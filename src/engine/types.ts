@@ -109,6 +109,22 @@ export interface DuelState {
   winner: PlayerId | null;
 }
 
+export type OverrideCardDestination =
+  | { zone: "hand" }
+  | { zone: "graveyard" }
+  | { zone: "banished" }
+  | {
+      zone: "monsterZone";
+      index: number;
+      face: "faceUp" | "faceDown";
+      position: BattlePosition;
+    }
+  | {
+      zone: "spellTrapZone";
+      index: number;
+      face: "faceUp" | "faceDown";
+    };
+
 export type DuelAction =
   | { type: "draw"; playerId: PlayerId }
   | { type: "advance-phase"; playerId: PlayerId }
@@ -132,6 +148,12 @@ export type DuelAction =
       playerId: PlayerId;
       instanceId: string;
       destination: "graveyard" | "banished";
+    }
+  | {
+      type: "override-card-location";
+      playerId: PlayerId;
+      instanceId: string;
+      destination: OverrideCardDestination;
     }
   | {
       type: "attack";

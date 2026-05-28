@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { loadCards } from "./cardData";
 import {
   attackWithSelectedCard,
   answerActivePrompt,
-  banishSelected,
   canEnterBattle,
   continueTurnFlow,
   createDemoGameState,
@@ -13,31 +12,37 @@ import {
   getChainView,
   getLegalAttackTargetsForCard,
   getLegalPlacementsForCard,
+  getOverrideCardEntries,
   getPriorityView,
   getPromptView,
   getTurnFlowActionLabel,
   getUnavailableHandCardIds,
+  isViewerActivePlayer,
+  overrideCardLocation,
   passPriorityForPlayer,
   resolveCurrentChain,
   type LegalAttackTarget,
   getSelectedCardInstance,
   type LegalPlacementAction,
   placeSelectedCard,
-  sendSelectedToGraveyard,
   setLifePoints,
 } from "./gameLogic";
 import { ActionPanel } from "./components/ActionPanel";
+import { ActionLog } from "./components/ActionLog";
 import { Board } from "./components/Board";
 import { CardDetail } from "./components/CardDetail";
 import { Hand } from "./components/Hand";
-import { MusicPlayer } from "./components/MusicPlayer";
+import { HomeScreen } from "./components/HomeScreen";
+import { LobbyScreen } from "./components/LobbyScreen";
+import { MusicPlayer, type MusicPlayerHandle } from "./components/MusicPlayer";
+import { OverridePanel } from "./components/OverridePanel";
 import { PhaseHud } from "./components/PhaseHud";
 import { PlayerStatusCard } from "./components/PlayerStatusCard";
 import { PromptPanel } from "./components/PromptPanel";
 import { PriorityPanel } from "./components/PriorityPanel";
 import { ChainPanel } from "./components/ChainPanel";
 import { TargetSelectionOverlay } from "./components/TargetSelectionOverlay";
-import type { CardRecord } from "./types";
+import type { CardRecord, Screen, SessionState } from "./types";
 
 // Dev-only: `?scenario=demo` boots a fully populated board for visual testing.
 // `import.meta.env.DEV` is false in production builds, so this never ships.
@@ -52,12 +57,30 @@ interface PendingTributeSelection {
   lockedTributeIds: string[];
 }
 
-function buildGameState(cards: CardRecord[]) {
+function buildGameState(cards: CardRecord[], viewerId: "P1" | "P2" = "P1") {
   return demoScenarioActive
     ? createDemoGameState(cards)
     : createInitialGameState(cards, {
-        opponentBehavior: import.meta.env.DEV ? "passive-board-filler" : "none",
+        opponentBehavior: import.meta.env.DEV && viewerId === "P1" ? "passive-board-filler" : "none",
+        viewerId,
       });
+}
+
+const DEFAULT_P1_NAME = "Player 1";
+const DEFAULT_P2_NAME = "Player 2";
+
+const DEFAULT_SESSION: SessionState = {
+  p1Name: "",
+  p2Name: "",
+  spectatorName: "",
+  viewerRole: "P1",
+};
+
+const initialScreen: Screen = demoScenarioActive ? "game" : "home";
+
+function resolveDisplayName(raw: string, fallback: string): string {
+  const trimmed = raw.trim();
+  return trimmed.length === 0 ? fallback : trimmed;
 }
 
 export default function App() {
@@ -68,6 +91,11 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [pendingTribute, setPendingTribute] = useState<PendingTributeSelection | null>(null);
   const [promptSelectionIds, setPromptSelectionIds] = useState<string[]>([]);
+  const [screen, setScreen] = useState<Screen>(initialScreen);
+  const [session, setSession] = useState<SessionState>(DEFAULT_SESSION);
+  const [musicSlotEl, setMusicSlotEl] = useState<HTMLDivElement | null>(null);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const musicRef = useRef<MusicPlayerHandle>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +155,7 @@ export default function App() {
   const promptView = useMemo(() => getPromptView(game), [game]);
   const priorityView = useMemo(() => getPriorityView(game), [game]);
   const chainView = useMemo(() => getChainView(game), [game]);
+  const overrideEntries = useMemo(() => getOverrideCardEntries(game), [game]);
 
   useEffect(() => {
     setPromptSelectionIds([]);
@@ -137,8 +166,9 @@ export default function App() {
       return;
     }
 
+    const viewerId = game.viewerId ?? "P1";
     try {
-      setGame(buildGameState(cards));
+      setGame(buildGameState(cards, viewerId));
     } catch (error: unknown) {
       setErrorTitle("Duel setup unavailable");
       setErrorMessage(errorMessageFromUnknown(error));
@@ -148,6 +178,59 @@ export default function App() {
 
     setPendingTribute(null);
     setPromptSelectionIds([]);
+    setOverrideOpen(false);
+  }
+
+  function startDuel(viewerId: "P1" | "P2") {
+    if (cards.length === 0) {
+      return;
+    }
+
+    try {
+      setGame(buildGameState(cards, viewerId));
+    } catch (error: unknown) {
+      setErrorTitle("Duel setup unavailable");
+      setErrorMessage(errorMessageFromUnknown(error));
+      setLoadState("error");
+      return;
+    }
+
+    setPendingTribute(null);
+    setPromptSelectionIds([]);
+    setOverrideOpen(false);
+  }
+
+  function enterGame(role: "P1" | "P2") {
+    startDuel(role);
+    setSession((current) => ({
+      ...current,
+      p1Name: resolveDisplayName(current.p1Name, DEFAULT_P1_NAME),
+      p2Name: resolveDisplayName(current.p2Name, DEFAULT_P2_NAME),
+      viewerRole: role,
+    }));
+    setScreen("game");
+  }
+
+  function enterSpectator() {
+    startDuel("P1");
+    setSession((current) => ({
+      ...current,
+      p1Name: resolveDisplayName(current.p1Name, DEFAULT_P1_NAME),
+      p2Name: resolveDisplayName(current.p2Name, DEFAULT_P2_NAME),
+      viewerRole: "spectator",
+    }));
+    setScreen("spectator");
+  }
+
+  function updateSession(changes: Partial<SessionState>) {
+    setSession((current) => ({ ...current, ...changes }));
+  }
+
+  function leaveDuel() {
+    setPendingTribute(null);
+    setPromptSelectionIds([]);
+    setOverrideOpen(false);
+    setScreen("lobby");
   }
 
   function selectCard(cardId: string) {
@@ -271,6 +354,11 @@ export default function App() {
     setGame((current) => continueTurnFlow(current));
   }
 
+  function handleOverride(instanceId: string, destination: Parameters<typeof overrideCardLocation>[2]) {
+    setPendingTribute(null);
+    setGame((current) => overrideCardLocation(current, instanceId, destination));
+  }
+
   function handleSetLp(side: "player" | "opponent", value: number) {
     setGame((current) => setLifePoints(current, side, value));
   }
@@ -302,53 +390,65 @@ export default function App() {
     );
   }
 
-  return (
-    <main className="screen">
-      <section className="duel-shell" aria-label="GOAT duel test screen">
+  const isSpectator = session.viewerRole === "spectator";
+  const viewerIsP2 = session.viewerRole === "P2";
+  const viewerName = viewerIsP2 ? session.p2Name : session.p1Name;
+  const opponentName = viewerIsP2 ? session.p1Name : session.p2Name;
+  const viewerActive = !isSpectator && isViewerActivePlayer(game);
+  const advanceLabel = viewerActive
+    ? getTurnFlowActionLabel(game)
+    : `Waiting on ${opponentName}`;
+  const duelView = (
+    <main className={`screen ${isSpectator ? "spectator-screen" : ""}`}>
+      <section className="duel-shell" aria-label={isSpectator ? "GOAT duel spectator view" : "GOAT duel test screen"}>
         <div className="table-column">
           <Board
             game={game}
-            legalPlacements={legalPlacements}
-            legalAttackTargets={legalAttackTargets}
+            legalPlacements={isSpectator ? [] : legalPlacements}
+            legalAttackTargets={isSpectator ? [] : legalAttackTargets}
             onSelectCard={selectCard}
             onPlaceCard={handlePlaceCard}
             onAttack={handleAttack}
-            tributeSelection={pendingTribute}
+            tributeSelection={isSpectator ? null : pendingTribute}
             onToggleTribute={toggleTributeSelection}
             onCancelTribute={() => setPendingTribute(null)}
             onConfirmTribute={confirmTributeSelection}
           />
 
-          <Hand
-            cards={game.player.hand}
-            selectedCardId={game.selectedCardId}
-            lastDrawnCardId={game.lastDrawnCardId}
-            unavailableCardIds={unavailableHandCardIds}
-            debugMoveEnabled={import.meta.env.DEV}
-            onSelectCard={selectCard}
-            onSendToGraveyard={() => setGame((current) => sendSelectedToGraveyard(current))}
-            onBanish={() => setGame((current) => banishSelected(current))}
-          />
+          {isSpectator ? null : (
+            <Hand
+              cards={game.player.hand}
+              selectedCardId={game.selectedCardId}
+              lastDrawnCardId={game.lastDrawnCardId}
+              unavailableCardIds={unavailableHandCardIds}
+              onSelectCard={selectCard}
+              onOpenOverride={() => setOverrideOpen(true)}
+            />
+          )}
 
           <div className="right-rail" aria-label="Match status">
             <PlayerStatusCard
-              name="Player 2"
+              name={opponentName}
               lp={game.opponent.lp}
               accent="opponent"
               onEditLp={(value) => handleSetLp("opponent", value)}
+              readonly={isSpectator}
             />
             <PhaseHud
               phase={game.phase}
               turn={game.turn}
               canEnterBattle={canEnterBattle(game)}
-              actionLabel={getTurnFlowActionLabel(game)}
-              onAdvance={handleAdvance}
+              actionLabel={advanceLabel}
+              onAdvance={isSpectator ? undefined : handleAdvance}
+              disabled={!viewerActive}
+              disabledLabel={advanceLabel}
             />
             <PlayerStatusCard
-              name="Player 1"
+              name={viewerName}
               lp={game.player.lp}
               accent="player"
               onEditLp={(value) => handleSetLp("player", value)}
+              readonly={isSpectator}
             />
           </div>
 
@@ -361,30 +461,75 @@ export default function App() {
 
         <aside className="side-rail">
           <CardDetail selectedCard={selectedCard} />
-          <div className="engine-surface-stack">
-            <PromptPanel
-              prompt={promptView}
-              selectedCandidateCount={promptSelectionIds.length}
-              onChoice={answerPromptChoice}
-              onConfirmSelection={confirmPromptSelection}
-              onClearSelection={() => setPromptSelectionIds([])}
-            />
-            <PriorityPanel
-              priority={priorityView}
-              onPassPriority={() => setGame((current) => passPriorityForPlayer(current))}
-            />
-            <ChainPanel
-              chain={chainView}
-              onResolveChain={() => setGame((current) => resolveCurrentChain(current))}
-            />
-          </div>
+          {!isSpectator && (
+            <div className="engine-surface-stack">
+              <PromptPanel
+                prompt={promptView}
+                selectedCandidateCount={promptSelectionIds.length}
+                onChoice={answerPromptChoice}
+                onConfirmSelection={confirmPromptSelection}
+                onClearSelection={() => setPromptSelectionIds([])}
+              />
+              <PriorityPanel
+                priority={priorityView}
+                onPassPriority={() => setGame((current) => passPriorityForPlayer(current))}
+              />
+              <ChainPanel
+                chain={chainView}
+                onResolveChain={() => setGame((current) => resolveCurrentChain(current))}
+              />
+              <ActionLog entries={game.actionLog} />
+            </div>
+          )}
           <div className="rail-footer">
-            <MusicPlayer />
-            <ActionPanel onReset={resetGame} />
+            <div ref={setMusicSlotEl} className="music-rail-slot" />
+            <ActionPanel onReset={isSpectator ? undefined : resetGame} onLeave={leaveDuel} />
           </div>
         </aside>
+
+        {!isSpectator && overrideOpen ? (
+          <OverridePanel
+            entries={overrideEntries}
+            player={game.player}
+            onClose={() => setOverrideOpen(false)}
+            onOverride={handleOverride}
+          />
+        ) : null}
       </section>
     </main>
+  );
+
+  let screenContent: ReactNode;
+  if (screen === "home") {
+    screenContent = (
+      <HomeScreen
+        onPlay={() => {
+          musicRef.current?.start();
+          setScreen("lobby");
+        }}
+      />
+    );
+  } else if (screen === "lobby") {
+    screenContent = (
+      <LobbyScreen
+        session={session}
+        onUpdateSession={updateSession}
+        onEnterGame={enterGame}
+        onEnterSpectator={enterSpectator}
+        onBack={() => setScreen("home")}
+      />
+    );
+  } else {
+    screenContent = duelView;
+  }
+
+  return (
+    <>
+      {screenContent}
+      <div className="music-launcher" data-screen={screen}>
+        <MusicPlayer ref={musicRef} autoStart={false} portalTarget={musicSlotEl} />
+      </div>
+    </>
   );
 }
 

@@ -21,6 +21,7 @@ export function projectEngineToGameState(
 ): GameState {
   return {
     engine,
+    viewerId,
     opponentBehavior: meta.opponentBehavior ?? "none",
     opponentTargetMonsterCount: meta.opponentTargetMonsterCount ?? 3,
     player: selectPlayerView(engine, viewerId),

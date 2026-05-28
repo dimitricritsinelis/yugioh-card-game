@@ -186,6 +186,7 @@ export function applyAction(state: DuelState, action: DuelAction): DuelResult {
     case "answer-prompt":
     case "set-phase":
     case "move-card":
+    case "override-card-location":
       handleCoreRoutedAction(draft, action);
       break;
     case "set-life-points":
@@ -974,6 +975,8 @@ function coreCommandsFromLegacyAction(
           },
         ],
       };
+    case "override-card-location":
+      return { commands: [action] };
     case "attack":
       return {
         commands: [

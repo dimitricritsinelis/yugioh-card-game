@@ -7,13 +7,28 @@ interface PhaseHudProps {
   turn: number;
   canEnterBattle: boolean;
   actionLabel: string;
-  onAdvance: () => void;
+  onAdvance?: () => void;
+  disabled?: boolean;
+  disabledLabel?: string;
 }
 
-export function PhaseHud({ phase, turn, canEnterBattle, actionLabel, onAdvance }: PhaseHudProps) {
+export function PhaseHud({
+  phase,
+  turn,
+  canEnterBattle,
+  actionLabel,
+  onAdvance,
+  disabled = false,
+  disabledLabel,
+}: PhaseHudProps) {
   const currentIndex = ACTION_PHASES.indexOf(phase);
-  const endingTurn = actionLabel === "End Turn";
-  const actionAriaLabel = phase === "M1" && canEnterBattle ? "Enter Battle Phase" : actionLabel;
+  const effectiveLabel = disabled && disabledLabel ? disabledLabel : actionLabel;
+  const endingTurn = !disabled && actionLabel === "End Turn";
+  const actionAriaLabel = disabled
+    ? effectiveLabel
+    : phase === "M1" && canEnterBattle
+      ? "Enter Battle Phase"
+      : actionLabel;
 
   return (
     <section className="stone-panel phase-hud" aria-label="Turn phases">
@@ -41,15 +56,18 @@ export function PhaseHud({ phase, turn, canEnterBattle, actionLabel, onAdvance }
         })}
       </ol>
 
-      <button
-        type="button"
-        className={`phase-advance ${endingTurn ? "end-turn" : ""}`}
-        onClick={onAdvance}
-        aria-label={actionAriaLabel}
-      >
-        {actionLabel}
-        {endingTurn ? <SkipForward size={14} /> : <ChevronRight size={15} />}
-      </button>
+      {onAdvance ? (
+        <button
+          type="button"
+          className={`phase-advance ${endingTurn ? "end-turn" : ""}`}
+          onClick={onAdvance}
+          aria-label={actionAriaLabel}
+          disabled={disabled}
+        >
+          {effectiveLabel}
+          {disabled ? null : endingTurn ? <SkipForward size={14} /> : <ChevronRight size={15} />}
+        </button>
+      ) : null}
     </section>
   );
 }
