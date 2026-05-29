@@ -392,43 +392,26 @@ export function getLegalAttackTargetsForCard(
   return selectLegalAttackTargets(state.engine, getViewerId(state), attackerId);
 }
 
+// Manual-play build: chains, priority, and effect prompts are removed. These
+// view-models return empty defaults so any remaining callers stay inert.
 export function getPriorityView(state: GameState): PriorityView {
-  const viewer = getViewerId(state);
   return {
-    currentPlayerId: state.engine?.priorityPlayer ?? viewer,
-    canPass: Boolean(
-      state.engine &&
-        state.engine.priorityPlayer === viewer &&
-        state.engine.pendingPrompts.length === 0 &&
-        !state.engine.winner,
-    ),
+    currentPlayerId: getViewerId(state),
+    canPass: false,
   };
 }
 
-export function getChainView(state: GameState): ChainView {
-  const viewer = getViewerId(state);
-  const links = state.engine?.chain ?? [];
-
+export function getChainView(_state: GameState): ChainView {
   return {
-    links: links.map(toChainLinkView),
-    canResolve: Boolean(
-      state.engine &&
-        links.length > 0 &&
-        state.engine.priorityPlayer === viewer &&
-        state.engine.pendingPrompts.length === 0,
-    ),
+    links: [],
+    canResolve: false,
   };
 }
 
-export function getPromptView(state: GameState): PromptView {
-  const viewer = getViewerId(state);
-  const activePrompt = state.engine?.pendingPrompts.find((prompt) => prompt.playerId === viewer) ?? null;
-
+export function getPromptView(_state: GameState): PromptView {
   return {
-    activePrompt,
-    candidates: activePrompt && promptUsesCardSelection(activePrompt.kind)
-      ? collectPromptSelectionCandidates(state)
-      : [],
+    activePrompt: null,
+    candidates: [],
   };
 }
 
@@ -451,61 +434,21 @@ export function getOverrideCardEntries(state: GameState): OverrideCardEntry[] {
   return entries.sort(compareOverrideEntries);
 }
 
+// Manual-play build: priority/chain/prompt actions no longer exist. Kept as
+// no-ops so any stale callers compile and do nothing.
 export function passPriorityForPlayer(state: GameState): GameState {
-  const viewer = getViewerId(state);
-
-  if (!state.engine || state.engine.priorityPlayer !== viewer) {
-    return state;
-  }
-
-  const result = applyAction(state.engine, { type: "pass-priority", playerId: viewer });
-
-  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
+  return state;
 }
 
 export function resolveCurrentChain(state: GameState): GameState {
-  const viewer = getViewerId(state);
-
-  if (!state.engine || state.engine.chain.length === 0) {
-    return state;
-  }
-
-  const result = applyAction(state.engine, { type: "resolve-chain", playerId: viewer });
-
-  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
+  return state;
 }
 
 export function answerActivePrompt(
   state: GameState,
-  answer: { promptId: string; choiceIds?: string[]; candidateIds?: string[] },
+  _answer: { promptId: string; choiceIds?: string[]; candidateIds?: string[] },
 ): GameState {
-  if (!state.engine) {
-    return state;
-  }
-
-  const viewer = getViewerId(state);
-  const prompt = state.engine.pendingPrompts.find((candidate) => candidate.id === answer.promptId);
-
-  if (!prompt || prompt.playerId !== viewer) {
-    return state;
-  }
-
-  const selectedCandidates = collectPromptSelectionCandidates(state).filter((candidate) =>
-    (answer.candidateIds ?? []).includes(candidate.id),
-  );
-  const result = applyAction(state.engine, {
-    type: "answer-prompt",
-    playerId: viewer,
-    promptId: prompt.id,
-    choiceIds: answer.choiceIds,
-    targetRefs: prompt.kind === "target" ? selectedCandidates.map((candidate) => candidate.zoneRef) : undefined,
-    discardInstanceIds:
-      prompt.kind === "discard" ? selectedCandidates.map((candidate) => candidate.instanceId) : undefined,
-    tributeInstanceIds:
-      prompt.kind === "tribute" ? selectedCandidates.map((candidate) => candidate.instanceId) : undefined,
-  });
-
-  return projectEngineToGameState(result.state, preserveMeta(state), viewer);
+  return state;
 }
 
 export function setLifePoints(
@@ -569,6 +512,31 @@ export function placeSelectedCard(
       selectedCardId: state.selectedCardId,
       lastDrawnCardId: null,
       lastPlacedCardId: placed ? state.selectedCardId : null,
+      opponentBehavior: state.opponentBehavior,
+      opponentTargetMonsterCount: state.opponentTargetMonsterCount,
+    },
+    viewer,
+  );
+}
+
+export function activateSetCard(state: GameState, instanceId: string): GameState {
+  if (!state.engine) {
+    return state;
+  }
+
+  const viewer = getViewerId(state);
+  const result = applyAction(state.engine, {
+    type: "activate-set-card",
+    playerId: viewer,
+    instanceId,
+  });
+
+  return projectEngineToGameState(
+    result.state,
+    {
+      selectedCardId: instanceId,
+      lastDrawnCardId: null,
+      lastPlacedCardId: instanceId,
       opponentBehavior: state.opponentBehavior,
       opponentTargetMonsterCount: state.opponentTargetMonsterCount,
     },
@@ -676,11 +644,29 @@ function overrideEntry(instance: DuelCardInstance, location: OverrideCardLocatio
 
 function compareOverrideEntries(first: OverrideCardEntry, second: OverrideCardEntry): number {
   return (
+    overrideLocationRank(first.location.area) - overrideLocationRank(second.location.area) ||
     first.card.name.localeCompare(second.card.name) ||
     first.card.passcode.localeCompare(second.card.passcode) ||
     copyNumberFromInstanceId(first.instanceId) - copyNumberFromInstanceId(second.instanceId) ||
     first.instanceId.localeCompare(second.instanceId)
   );
+}
+
+// Group the Override list by location: Hand, Board, Graveyard, Banished, then Deck.
+function overrideLocationRank(area: OverrideCardLocation["area"]): number {
+  switch (area) {
+    case "hand":
+      return 0;
+    case "monsterZone":
+    case "spellTrapZone":
+      return 1;
+    case "graveyard":
+      return 2;
+    case "banished":
+      return 3;
+    case "deck":
+      return 4;
+  }
 }
 
 function copyNumberFromInstanceId(instanceId: string): number {

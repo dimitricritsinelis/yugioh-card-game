@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
-import { isPlayableCard } from "../cards/coverage";
 import type { DuelState } from "../core/state";
 import { createDuel, reduceDuel } from "../reducer";
 
@@ -52,7 +51,6 @@ describe("core phase flow", () => {
     expect(ended.state.turn).toBe(2);
     expect(ended.state.phase).toBe("DP");
     expect(ended.state.activePlayer).toBe("P2");
-    expect(ended.state.priorityPlayer).toBe("P2");
     expect(ended.events.map((event) => event.type)).toEqual(["phase-changed", "turn-started"]);
 
     state = ended.state;
@@ -143,7 +141,7 @@ function legalMainDeck(size: number): string[] {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        isPlayableCard(card.passcode, cards),
+        card.legality.goat_world_pool === true,
     )
     .map((card) => card.passcode);
 

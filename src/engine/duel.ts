@@ -1,5 +1,4 @@
 import type { CardRecord, Phase, ZoneKind } from "../types";
-import { isPlayableCard } from "./cards/coverage";
 import type { CardInstance as CoreCardInstance, ZoneCard as CoreZoneCard } from "./core/cardRefs";
 import type { DuelState as CoreDuelState } from "./core/state";
 import { validateDeck } from "./deckValidation";
@@ -7,11 +6,8 @@ import { shuffleSeeded } from "./random";
 import { createDuel as createCoreDuel, reduceDuel } from "./reducer";
 import type { EngineCommand } from "./commands";
 import type { EngineEvent } from "./events";
-import { createPriorityWindow, PASS_PRIORITY } from "./rules/priority";
-import type { ChainLink as CoreChainLink } from "./rules/chain";
 import type { EnginePrompt } from "./result";
 import type {
-  ChainLink,
   CreateDuelConfig,
   DeckList,
   DuelAction,
@@ -181,13 +177,13 @@ export function applyAction(state: DuelState, action: DuelAction): DuelResult {
     case "end-turn":
     case "play-card":
     case "attack":
-    case "pass-priority":
-    case "resolve-chain":
-    case "answer-prompt":
     case "set-phase":
     case "move-card":
     case "override-card-location":
       handleCoreRoutedAction(draft, action);
+      break;
+    case "activate-set-card":
+      handleActivateSetCard(draft, action.playerId, action.instanceId);
       break;
     case "set-life-points":
       setLifePoints(draft, action.targetPlayerId, action.value);
@@ -195,6 +191,42 @@ export function applyAction(state: DuelState, action: DuelAction): DuelResult {
   }
 
   return result(draft, eventStart);
+}
+
+// Manual-play activation of a face-down Spell/Trap already on the field: flip it
+// face-up. No effect is resolved. Traps cannot be activated the turn they were Set.
+function handleActivateSetCard(state: DuelState, playerId: PlayerId, instanceId: string): void {
+  if (!requireActivePlayer(state, playerId)) {
+    return;
+  }
+
+  const player = state.players[playerId];
+  const index = player.spellTrapZones.findIndex((zone) => zone?.instance.instanceId === instanceId);
+  const zone = index >= 0 ? player.spellTrapZones[index] : null;
+
+  if (!zone) {
+    addEvent(state, "illegal-action", "Selected card is not a Set Spell/Trap you control.");
+    return;
+  }
+
+  if (!zone.faceDown) {
+    addEvent(state, "illegal-action", "That card is already face-up.");
+    return;
+  }
+
+  if (zone.instance.card.category === "Trap" && (zone.setTurn == null || zone.setTurn >= state.turn)) {
+    addEvent(state, "illegal-action", "Trap Cards cannot be activated the turn they are Set.");
+    return;
+  }
+
+  player.spellTrapZones[index] = {
+    ...zone,
+    faceDown: false,
+    position: "attack",
+    status: "activated",
+  };
+  state.coreState = coreStateFromLegacy(state);
+  addEvent(state, "card-activated", `${playerId} activated ${zone.instance.card.name}.`);
 }
 
 export function advanceToNextDecision(state: DuelState, playerId: PlayerId): DuelResult {
@@ -259,14 +291,11 @@ export function serializeDuel(state: DuelState, viewerId: PlayerId): SerializedD
     turn: state.turn,
     phase: state.phase,
     activePlayer: state.activePlayer,
-    priorityPlayer: state.priorityPlayer,
     battleSubstep: state.battleSubstep,
     players: {
       P1: serializePlayer(state.players.P1, viewerId),
       P2: serializePlayer(state.players.P2, viewerId),
     },
-    chain: state.chain,
-    pendingPrompts: state.pendingPrompts.filter((prompt) => prompt.playerId === viewerId),
     events: state.events.slice(-12),
     winner: state.winner,
   };
@@ -426,7 +455,6 @@ function handleAdvancePhase(state: DuelState, playerId: PlayerId): void {
   }
 
   state.phase = nextPhase;
-  state.priorityPlayer = state.activePlayer;
   state.battleSubstep = nextPhase === "BP" ? "start" : "none";
 
   if (nextPhase === "BP") {
@@ -442,7 +470,6 @@ function handleSetPhase(state: DuelState, playerId: PlayerId, phase: Phase): voi
   }
 
   state.phase = phase;
-  state.priorityPlayer = playerId;
   state.battleSubstep = phase === "BP" ? "start" : "none";
   addEvent(state, "phase-set", `Jumped to ${phaseLabel(phase)}.`);
 }
@@ -460,7 +487,6 @@ function handleEndTurn(state: DuelState, playerId: PlayerId): void {
 
   const nextPlayer = state.mode === "solo" ? playerId : opponentOf(playerId);
   state.activePlayer = nextPlayer;
-  state.priorityPlayer = nextPlayer;
   state.phase = "DP";
   state.turn += 1;
   state.battleSubstep = "none";
@@ -838,17 +864,11 @@ function legacyStateFromCore(
     turn: coreState.turn,
     phase: coreState.phase,
     activePlayer: coreState.activePlayer,
-    priorityPlayer: coreState.priorityPlayer,
     battleSubstep: legacyBattleSubstepFromCore(coreState),
     players: {
       P1: legacyPlayerFromCore(coreState.players.P1, cardByPasscode, coreState.turn),
       P2: legacyPlayerFromCore(coreState.players.P2, cardByPasscode, coreState.turn),
     },
-    chain: coreState.chain.map(legacyChainLinkFromCore),
-    pendingPrompts: coreState.pendingPromptIds
-      .map((promptId) => coreState.prompts[promptId])
-      .filter(isEnginePrompt)
-      .map(legacyPromptFromCore),
     events: events.map(legacyEventFromCore),
     turnFlags: {
       drawnThisTurn: coreState.turnFlags?.drawnThisTurn ?? false,
@@ -870,16 +890,10 @@ function syncLegacyStateFromCoreResult(
   state.turn = next.turn;
   state.phase = next.phase;
   state.activePlayer = next.activePlayer;
-  state.priorityPlayer = next.priorityPlayer;
   state.battleSubstep = next.battleSubstep;
   state.players = next.players;
   state.winner = next.winner;
   state.turnFlags = next.turnFlags;
-  state.chain = coreState.chain.map(legacyChainLinkFromCore);
-  state.pendingPrompts = coreState.pendingPromptIds
-    .map((promptId) => coreState.prompts[promptId])
-    .filter(isEnginePrompt)
-    .map(legacyPromptFromCore);
   state.events = [...state.events, ...events.map(legacyEventFromCore)].slice(-40);
 }
 
@@ -988,12 +1002,8 @@ function coreCommandsFromLegacyAction(
           },
         ],
       };
-    case "pass-priority":
-      return { commands: [{ type: PASS_PRIORITY, playerId: action.playerId }] };
-    case "resolve-chain":
-      return { commands: [action] };
-    case "answer-prompt":
-      return { commands: [action] };
+    case "activate-set-card":
+      return { error: "Activating a Set card is handled directly, not through core routing." };
     case "set-life-points":
       return { error: "Life point editing is handled by the debug life point control." };
   }
@@ -1053,14 +1063,14 @@ function coreCommandsFromPlayCardAction(
     };
   }
 
+  // Manual-play activation: place the Spell/Trap face-up and log it (no effect).
   return {
     commands: [
       {
         type: "activate-card",
         playerId: action.playerId,
         instanceId: action.instanceId,
-        targetRefs: action.targetRefs,
-        targetPlayerIds: action.targetPlayerIds,
+        zoneIndex: action.zoneIndex,
       },
     ],
   };
@@ -1118,10 +1128,6 @@ function nextPhaseAfter(phase: Phase): Phase | null {
 
 function coreStateFromLegacy(state: DuelState): CoreDuelState {
   const previousCore = state.coreState;
-  const priority =
-    previousCore?.priority.holder === state.priorityPlayer
-      ? previousCore.priority
-      : createPriorityWindow(state.priorityPlayer, "phase-start");
 
   return {
     id: state.id,
@@ -1130,34 +1136,14 @@ function coreStateFromLegacy(state: DuelState): CoreDuelState {
     turn: state.turn,
     phase: state.phase,
     activePlayer: state.activePlayer,
-    priorityPlayer: state.priorityPlayer,
     turnFlags: { ...state.turnFlags },
-    priority,
     damageStep: previousCore?.damageStep,
     cardDefinitions: previousCore?.cardDefinitions,
-    cardScripts: previousCore?.cardScripts,
-    implementedCardIds: previousCore?.implementedCardIds,
     players: {
       P1: corePlayerFromLegacy(state.players.P1, state.turn),
       P2: corePlayerFromLegacy(state.players.P2, state.turn),
     },
-    chain: previousCore?.chain ?? [],
     pendingAttack: previousCore?.pendingAttack ?? null,
-    lingeringEffects: previousCore?.lingeringEffects ?? [],
-    prompts: Object.fromEntries(
-      state.pendingPrompts.map((prompt) => [
-        prompt.id,
-        {
-          id: prompt.id,
-          playerId: prompt.playerId,
-          kind: prompt.kind === "priority" ? "chain-response" : prompt.kind,
-          message: prompt.message,
-          min: prompt.min,
-          max: prompt.max,
-        },
-      ]),
-    ),
-    pendingPromptIds: state.pendingPrompts.map((prompt) => prompt.id),
     eventIds: previousCore?.eventIds ?? state.events.map((event) => event.id),
     winner: state.winner,
   };
@@ -1252,6 +1238,7 @@ function legacyZoneFromCore(
     faceDown: card.face === "faceDown",
     position: card.position ?? "attack",
     status: card.face === "faceDown" ? "set" : card.position ? "summoned" : "activated",
+    setTurn: card.setTurn ?? null,
   };
 }
 
@@ -1270,6 +1257,7 @@ function coreZoneFromLegacy(zone: DuelZoneCard | null, turn = 0): CoreZoneCard |
     summonedTurn: zone.instance.summonedTurn,
     positionChangedTurn: zone.instance.positionChangedTurn,
     attackedTurn: zone.instance.attackedThisTurn ? turn : null,
+    setTurn: zone.setTurn ?? null,
   };
 }
 
@@ -1278,30 +1266,6 @@ function legacyEventFromCore(event: EngineEvent): DuelEvent {
     id: event.id,
     type: event.type,
     message: event.message,
-  };
-}
-
-function legacyChainLinkFromCore(link: CoreChainLink): ChainLink {
-  return {
-    id: link.id,
-    playerId: link.playerId,
-    sourceInstanceId: link.sourceInstanceId,
-    cardId: link.cardId,
-    effectId: link.effectId,
-    spellSpeed: link.spellSpeed,
-    targetInstanceIds: [],
-  };
-}
-
-function legacyPromptFromCore(prompt: EnginePrompt): DuelPrompt {
-  return {
-    id: prompt.id,
-    playerId: prompt.playerId,
-    kind: prompt.kind,
-    message: prompt.message,
-    min: prompt.min,
-    max: prompt.max,
-    metadata: prompt.metadata,
   };
 }
 
@@ -1385,7 +1349,7 @@ function createRandomLegalDeck(cards: CardRecord[], seed: string): DeckList {
     if (
       card.legality.goat_world_pool !== true ||
       card.legality.max_copies <= 0 ||
-      !isPlayableCard(card.passcode, cards)
+      card.classifications?.includes("Fusion")
     ) {
       return [];
     }
@@ -1593,10 +1557,6 @@ function shouldAutoAdvancePhase(state: DuelState, playerId: PlayerId): boolean {
     return false;
   }
 
-  if (state.pendingPrompts.some((prompt) => prompt.playerId === playerId)) {
-    return false;
-  }
-
   return state.phase === "DP" || state.phase === "SP" || state.phase === "EP";
 }
 
@@ -1721,8 +1681,6 @@ function cloneState(state: DuelState): DuelState {
       P1: clonePlayer(state.players.P1),
       P2: clonePlayer(state.players.P2),
     },
-    chain: state.chain.map((link) => ({ ...link, targetInstanceIds: [...link.targetInstanceIds] })),
-    pendingPrompts: state.pendingPrompts.map((prompt) => ({ ...prompt })),
     events: state.events.map((event) => ({ ...event })),
     turnFlags: { ...state.turnFlags },
   };
@@ -1761,7 +1719,7 @@ function result(state: DuelState, eventStart: number): DuelResult {
   return {
     state,
     events: state.events.slice(eventStart),
-    prompts: state.pendingPrompts,
+    prompts: [],
   };
 }
 

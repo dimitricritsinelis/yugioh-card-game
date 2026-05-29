@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
-import { isPlayableCard, validateDeck } from "../index";
+import { validateDeck } from "../index";
 import type { DeckList } from "../types";
 
 const cards = cardsJson as CardRecord[];
@@ -59,13 +59,6 @@ describe("playable deck validation", () => {
     expect(result.errors.join(" ")).toContain("Extra/Fusion Decks are outside playable scope");
   });
 
-  it("rejects unsupported cards when a playable support set is provided", () => {
-    const result = validateDeck(deckWithPriority(["Graceful Charity"]), cards);
-
-    expect(result.valid).toBe(false);
-    expect(result.errors.join(" ")).toContain("Graceful Charity is not supported in playable decks");
-  });
-
   it("rejects duplicate cards over their copy limit", () => {
     const result = validateDeck(deckWithPriority(["Pot of Greed", "Pot of Greed"]), cards);
 
@@ -80,7 +73,7 @@ function legalMainDeck(size: number): string[] {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        isPlayableCard(card.passcode, cards),
+        card.legality.goat_world_pool === true,
     )
     .map((card) => card.passcode);
 

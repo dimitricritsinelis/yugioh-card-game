@@ -1,22 +1,5 @@
 export { validateDeck } from "./deckValidation";
 export type { DeckValidationOptions } from "./deckValidation";
-export {
-  CARD_COVERAGE_MANIFEST,
-  CARD_COVERAGE_STATUSES,
-  getCardCoverage,
-  getCoverageRejectionReason,
-  isPlayableCard,
-  isPlayableCardRecord,
-  isPlayableCoverageStatus,
-} from "./cards/coverage";
-export { buildPlayableCoverageReport } from "./cards/coverageReport";
-export {
-  CARD_SCRIPTS,
-  createCardScriptRegistry,
-  ENGINE_CARD_COVERAGE,
-  getCardScript,
-  hasCardScript,
-} from "./cards/registry";
 export { cloneDuelState, clonePlayerState } from "./core/clone";
 export {
   assertDuelStateInvariants,
@@ -47,43 +30,12 @@ export { normalizeCard, normalizeCardCatalog } from "./data/normalizeCard";
 export { createDuel as createCoreDuel, reduceDuel } from "./reducer";
 export { deserializeDuelState, serializeDuelState } from "./serialization";
 export {
-  createChainResolvedPriorityWindow,
-  createPriorityWindow,
-  passPriority,
-  PASS_PRIORITY,
-  validatePriorityPass,
-} from "./rules/priority";
-export {
-  addChainLink,
-  createChainLink,
-  resolveChainLifo,
-} from "./rules/chain";
-export { validateSpellSpeedForChain } from "./rules/spellSpeed";
-export {
   closeDamageStep,
   createDamageStepState,
   isDamageStepActive,
   validateDamageStepActivation,
 } from "./rules/damageStep";
-export {
-  collectContinuousSources,
-  deriveBattleStats,
-  isSourceOnField,
-  validateContinuousActivationRestrictions,
-  validateContinuousAttackRestrictions,
-} from "./effects/continuous";
-export { payCosts } from "./effects/costs";
-export { addLingeringEffect, expireLingeringEffectsForEndPhase } from "./effects/lingering";
-export { findDestructionReplacement } from "./effects/replacement";
-export { validateStoredTargets, validateTargetSelection } from "./effects/targets";
-export { createPrompt, createTargetPrompt } from "./prompts/prompt";
-export { validatePromptAnswer, validateSelectionCount } from "./prompts/selection";
 export { applyStateBasedCleanup } from "./rules/stateBasedCleanup";
-export {
-  collectTriggerCandidates,
-  createOptionalTriggerPrompt,
-  triggerCandidateFromPrompt,
-} from "./rules/triggers";
 export {
   advanceToNextDecision,
   applyAction,
@@ -94,12 +46,6 @@ export {
   serializeDuel,
 } from "./duel";
 export { createRngState, createSeededRng, nextRandom, shuffleSeeded, shuffleWithRng } from "./random";
-export {
-  buildInitialSupportedCardPool,
-  buildInitialSupportedPlayableDecks,
-  isInitialSupportedCard,
-  SUPPORTED_PLAYABLE_DECK_SEEDS,
-} from "./cards/supportedCards";
 export {
   assignRandomPlayableDecksToDuel,
   clonePlayableDeck,
@@ -145,7 +91,6 @@ export type {
   DeckValidationResult,
   CoreCardInstance,
   CoreCardVisibility,
-  CoreChainLink,
   CoreDuelState,
   CoreEngineCommand,
   CoreEngineError,
@@ -160,9 +105,6 @@ export type {
   CoreLocatedCardRef,
   CoreMonsterPosition,
   CorePlayerState,
-  CorePriorityState,
-  CorePriorityWindowReason,
-  CorePriorityWindowStatus,
   CoreRemoveFromZoneResult,
   CoreCardInZone,
   CoreTypedEngineEvent,
@@ -186,64 +128,12 @@ export type {
   SerializedDuelState,
 } from "./types";
 export type { RandomResult, RngState, ShuffleResult } from "./random";
-export type { CardCoverage, CardCoverageRegistry, CardCoverageStatus } from "./cards/coverage";
-export type {
-  SupportedCardEntry,
-  SupportedCardPool,
-  SupportedPlayableDeck,
-} from "./cards/supportedCards";
-export type {
-  CardEffectContext,
-  CardEffectResult,
-  CardScript,
-  EffectDefinition,
-  EffectKind,
-  SpellSpeed,
-} from "./cards/CardScript";
-export type { CardScriptRegistry } from "./cards/registry";
-export type { CostKind, CostPayment, CostSpec, PaidCost, PayCostsResult } from "./effects/costs";
-export type {
-  ContinuousEffectDefinition,
-  AttackRestrictionSpec,
-  BattleStat,
-  ContinuousEffectSource,
-  EffectTargetController,
-  EffectTargetFilter,
-  MonsterStatInput,
-  StatModifierSpec,
-} from "./effects/continuous";
-export type { ActiveLingeringEffect, LingeringEffectDefinition } from "./effects/lingering";
-export type {
-  DestructionReason,
-  DestructionReplacementAction,
-  DestructionReplacementInput,
-  DestructionReplacementResult,
-  DestructionReplacementSpec,
-  ReplacementEffectDefinition,
-} from "./effects/replacement";
-export type {
-  CardTargetSpec,
-  PlayerTargetSpec,
-  SelectedTargets,
-  TargetCardKind,
-  TargetController,
-  TargetFace,
-  TargetSelection,
-  TargetSpec,
-  TargetValidationResult,
-} from "./effects/targets";
-export type { PromptDefinition, PromptKind } from "./prompts/prompt";
 export type {
   DamageStepEffectKind,
   DamageStepEffectPermission,
   DamageStepState,
   DamageStepSubstep,
 } from "./rules/damageStep";
-export type {
-  TriggerCandidate,
-  TriggerDefinition,
-  TriggerTiming,
-} from "./rules/triggers";
 export type {
   BaseCardDefinition,
   CardCatalog,

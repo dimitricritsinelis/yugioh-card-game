@@ -172,6 +172,7 @@ function toZoneCard(zone: DuelZoneCard | null): ZoneCard | null {
     instance: toCardInstance(zone.instance),
     faceDown: zone.faceDown,
     stance: zone.status === "activated" ? "activated" : zone.faceDown ? "set" : "attack",
+    setTurn: zone.setTurn ?? null,
   };
 }
 

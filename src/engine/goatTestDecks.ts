@@ -1,5 +1,4 @@
 import type { CardRecord } from "../types";
-import { getCardCoverage, getCoverageRejectionReason, isPlayableCard } from "./cards/coverage";
 import { validateDeck } from "./deckValidation";
 import { createSeededRng, shuffleSeeded } from "./random";
 import type { DeckList, PlayerId } from "./types";
@@ -280,13 +279,9 @@ function buildPlayableMainDeck(
       continue;
     }
 
-    const coverage = getCardCoverage(card);
-
-    if (!isPlayableCard(card.passcode, cards)) {
+    if (card.legality.goat_world_pool !== true) {
       if (!warnedCardIds.has(card.passcode)) {
-        warnings.push(
-          `${deckName}: ${card.name} is ${getCoverageRejectionReason(coverage)}; using supported vanilla filler instead.`,
-        );
+        warnings.push(`${deckName}: ${card.name} is not in the Goat World card pool; skipped.`);
         warnedCardIds.add(card.passcode);
       }
       continue;
@@ -305,7 +300,7 @@ function buildPlayableMainDeck(
 
   const fillerPool = shuffleSeeded(
     cards.flatMap((card) => {
-      if (!isPlayableCard(card.passcode, cards)) {
+      if (card.legality.goat_world_pool !== true || card.classifications?.includes("Fusion")) {
         return [];
       }
 

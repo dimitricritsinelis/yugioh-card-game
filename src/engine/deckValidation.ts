@@ -1,13 +1,10 @@
 import type { CardRecord } from "../types";
-import type { CardCoverageRegistry } from "./cards/coverage";
-import { getCardCoverage, getCoverageRejectionReason, isPlayableCoverageStatus } from "./cards/coverage";
 import type { DeckList, DeckValidationResult } from "./types";
 
 const REQUIRED_MAIN_DECK_SIZE = 40;
 
 export interface DeckValidationOptions {
   allowUnsupportedCards?: boolean;
-  coverageRegistry?: CardCoverageRegistry;
 }
 
 export function validateDeck(
@@ -47,13 +44,9 @@ export function validateDeck(
       continue;
     }
 
-    if (!options.allowUnsupportedCards) {
-      const coverage = getCardCoverage(card, options.coverageRegistry);
-
-      if (!isPlayableCoverageStatus(coverage.status)) {
-        errors.push(`${card.name} is ${getCoverageRejectionReason(coverage)}.`);
-        continue;
-      }
+    if (card.classifications?.includes("Fusion")) {
+      errors.push(`${card.name}: Extra/Fusion Decks are outside playable scope.`);
+      continue;
     }
   }
 

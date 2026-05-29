@@ -10,6 +10,8 @@ interface BoardProps {
   onSelectCard: (cardId: string) => void;
   onPlaceCard: (placement: LegalPlacementAction) => void;
   onAttack: (target: LegalAttackTarget) => void;
+  onActivateSetCard: (instanceId: string) => void;
+  canActivateSetCards: boolean;
   tributeSelection: TributeSelectionView | null;
   onToggleTribute: (instanceId: string) => void;
   onCancelTribute: () => void;
@@ -29,6 +31,8 @@ export function Board({
   onSelectCard,
   onPlaceCard,
   onAttack,
+  onActivateSetCard,
+  canActivateSetCards,
   tributeSelection,
   onToggleTribute,
   onCancelTribute,
@@ -104,6 +108,9 @@ export function Board({
             legalPlacements={legalPlacements}
             onSelectCard={onSelectCard}
             onPlaceCard={onPlaceCard}
+            onActivateSetCard={onActivateSetCard}
+            canActivateSetCards={canActivateSetCards}
+            currentTurn={game.turn}
             tributeSelection={null}
             onToggleTribute={onToggleTribute}
           />
@@ -286,6 +293,9 @@ interface ZoneRowProps {
   onSelectCard?: (cardId: string) => void;
   onPlaceCard?: (placement: LegalPlacementAction) => void;
   onAttack?: (target: LegalAttackTarget) => void;
+  onActivateSetCard?: (instanceId: string) => void;
+  canActivateSetCards?: boolean;
+  currentTurn?: number;
   tributeSelection?: TributeSelectionView | null;
   onToggleTribute?: (instanceId: string) => void;
 }
@@ -303,6 +313,9 @@ function ZoneRow({
   onSelectCard,
   onPlaceCard,
   onAttack,
+  onActivateSetCard,
+  canActivateSetCards = false,
+  currentTurn,
   tributeSelection = null,
   onToggleTribute,
 }: ZoneRowProps) {
@@ -353,10 +366,23 @@ function ZoneRow({
             zoneKind === "monster" &&
             Boolean(zoneCard) &&
             (!tributeSelectionFull || tributeSelected);
+          const isSetSpellTrap =
+            !tributeSelection &&
+            zoneKind === "spellTrap" &&
+            Boolean(zoneCard) &&
+            zoneCard!.faceDown &&
+            zoneCard!.stance === "set";
+          const showActivateSet =
+            isSetSpellTrap &&
+            canActivateSetCards &&
+            zoneCard!.instance.instanceId === selectedCardId;
+          const trapSetThisTurn =
+            zoneCard?.instance.card.category === "Trap" &&
+            (zoneCard.setTurn == null || (currentTurn != null && zoneCard.setTurn >= currentTurn));
           const zoneClasses = [
             "duel-zone",
             zoneCard || isHidden ? "occupied" : "",
-            showActions || showAttackTarget || showDirectAttack ? "action-target" : "",
+            showActions || showAttackTarget || showDirectAttack || showActivateSet ? "action-target" : "",
             tributeCandidate ? "tribute-candidate" : "",
             tributeSelected ? "tribute-selected" : "",
             tributeLocked ? "tribute-locked" : "",
@@ -424,6 +450,22 @@ function ZoneRow({
                     onClick={() => onAttack(directAttackTarget)}
                   >
                     Direct
+                  </button>
+                </div>
+              ) : null}
+
+              {showActivateSet && zoneCard && onActivateSetCard ? (
+                <div className="zone-actions">
+                  <button
+                    type="button"
+                    className="zone-action-btn"
+                    disabled={trapSetThisTurn}
+                    title={
+                      trapSetThisTurn ? "Traps can't be activated the turn they're Set." : undefined
+                    }
+                    onClick={() => onActivateSetCard(zoneCard.instance.instanceId)}
+                  >
+                    Activate
                   </button>
                 </div>
               ) : null}

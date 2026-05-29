@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
-import { isPlayableCard } from "../cards/coverage";
-import type { CardCoverageRegistry, CardCoverageStatus } from "../cards/coverage";
-import { ENGINE_CARD_COVERAGE } from "../cards/registry";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
 import { createDuel, reduceDuel } from "../reducer";
@@ -88,31 +85,8 @@ describe("core win and loss conditions", () => {
     });
   });
 
-  it("does not award Exodia wins unless every Exodia piece is explicitly implemented", () => {
-    const defaultCoverage = createDuel({
-      cards,
-      decks: {
-        P1: deckWithPriority([...EXODIA_CARD_IDS]),
-        P2: deckWithPriority([]),
-      },
-      seed: "exodia-disabled",
-      shuffleDecks: false,
-      allowUnsupportedCards: true,
-    });
-    const partialCoverage = createDuel({
-      cards,
-      decks: {
-        P1: deckWithPriority([...EXODIA_CARD_IDS]),
-        P2: deckWithPriority([]),
-      },
-      seed: "exodia-partial",
-      shuffleDecks: false,
-      deckValidation: {
-        coverageRegistry: exodiaCoverageRegistry(EXODIA_CARD_IDS.slice(0, 4)),
-      },
-      allowUnsupportedCards: true,
-    });
-    const enabled = createDuel({
+  it("awards an Exodia win when all five pieces are gathered in hand", () => {
+    const duel = createDuel({
       cards,
       decks: {
         P1: deckWithPriority([...EXODIA_CARD_IDS]),
@@ -120,17 +94,13 @@ describe("core win and loss conditions", () => {
       },
       seed: "exodia-enabled",
       shuffleDecks: false,
-      deckValidation: {
-        coverageRegistry: exodiaCoverageRegistry(EXODIA_CARD_IDS),
-      },
+      allowUnsupportedCards: true,
     });
 
-    expect(defaultCoverage.state.winner).toBeNull();
-    expect(partialCoverage.state.winner).toBeNull();
-    expect(enabled.state.winner).toBe("P1");
-    expect(enabled.state.players.P2.lost).toBe(true);
-    expect(enabled.events.at(-2)).toMatchObject({ type: "player-lost", playerId: "P2", reason: "exodia" });
-    expect(enabled.events.at(-1)).toMatchObject({ type: "duel-finished", winner: "P1", reason: "exodia" });
+    expect(duel.state.winner).toBe("P1");
+    expect(duel.state.players.P2.lost).toBe(true);
+    expect(duel.events.at(-2)).toMatchObject({ type: "player-lost", playerId: "P2", reason: "exodia" });
+    expect(duel.events.at(-1)).toMatchObject({ type: "duel-finished", winner: "P1", reason: "exodia" });
   });
 });
 
@@ -193,7 +163,7 @@ function legalMainDeck(size: number): string[] {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        isPlayableCard(card.passcode, cards),
+        card.legality.goat_world_pool === true,
     )
     .map((card) => card.passcode);
 
@@ -219,22 +189,6 @@ function monsterZone(instanceId: string, name: string, owner: "P1" | "P2"): Zone
     positionChangedTurn: null,
     attackedTurn: null,
   };
-}
-
-function exodiaCoverageRegistry(cardIds: readonly string[]): CardCoverageRegistry {
-  const registry: Record<string, CardCoverageStatus> = {};
-
-  for (const [cardId, status] of Object.entries(ENGINE_CARD_COVERAGE)) {
-    if (status === "goatTemplate" || status === "goatCustom") {
-      registry[cardId] = status;
-    }
-  }
-
-  for (const cardId of cardIds) {
-    registry[cardId] = "goatTemplate";
-  }
-
-  return Object.freeze(registry);
 }
 
 function cardByName(name: string): CardRecord {

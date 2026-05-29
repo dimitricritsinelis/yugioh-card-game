@@ -142,6 +142,24 @@ export function isMonsterDefinition(card: CardDefinition | undefined): card is M
   return card?.kind === "monster";
 }
 
+export interface DeriveBattleStatsInput {
+  readonly base: BattleStats;
+  readonly playerId?: string;
+  readonly card?: ZoneCard;
+}
+
+/**
+ * Manual-play battle stats: with the automated effect system removed there are no
+ * continuous stat modifiers, so a monster's battle stats are just its base ATK/DEF
+ * (clamped at 0). Players apply any card-driven stat changes manually via Override.
+ */
+export function deriveBattleStats(_state: unknown, input: DeriveBattleStatsInput): BattleStats {
+  return {
+    atk: Math.max(0, input.base.atk),
+    def: Math.max(0, input.base.def),
+  };
+}
+
 function normalizeBattleStat(value: MonsterDefinition["monster"]["atk"]): number | null {
   if (typeof value === "number") {
     return value;

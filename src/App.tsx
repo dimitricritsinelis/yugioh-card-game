@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 import { loadCards } from "./cardData";
 import {
+  activateSetCard,
   attackWithSelectedCard,
   answerActivePrompt,
   canEnterBattle,
@@ -38,10 +39,6 @@ import { MusicPlayer, type MusicPlayerHandle } from "./components/MusicPlayer";
 import { OverridePanel } from "./components/OverridePanel";
 import { PhaseHud } from "./components/PhaseHud";
 import { PlayerStatusCard } from "./components/PlayerStatusCard";
-import { PromptPanel } from "./components/PromptPanel";
-import { PriorityPanel } from "./components/PriorityPanel";
-import { ChainPanel } from "./components/ChainPanel";
-import { TargetSelectionOverlay } from "./components/TargetSelectionOverlay";
 import type { CardRecord, Screen, SessionState } from "./types";
 
 // Dev-only: `?scenario=demo` boots a fully populated board for visual testing.
@@ -65,6 +62,8 @@ function buildGameState(cards: CardRecord[], viewerId: "P1" | "P2" = "P1") {
         viewerId,
       });
 }
+
+const HAND_SIZE_LIMIT = 6;
 
 const DEFAULT_P1_NAME = "Player 1";
 const DEFAULT_P2_NAME = "Player 2";
@@ -91,6 +90,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [pendingTribute, setPendingTribute] = useState<PendingTributeSelection | null>(null);
   const [promptSelectionIds, setPromptSelectionIds] = useState<string[]>([]);
+  const [discard, setDiscard] = useState<{ requiredCount: number; selectedIds: string[] } | null>(null);
   const [screen, setScreen] = useState<Screen>(initialScreen);
   const [session, setSession] = useState<SessionState>(DEFAULT_SESSION);
   const [musicSlotEl, setMusicSlotEl] = useState<HTMLDivElement | null>(null);
@@ -178,6 +178,7 @@ export default function App() {
 
     setPendingTribute(null);
     setPromptSelectionIds([]);
+    setDiscard(null);
     setOverrideOpen(false);
   }
 
@@ -197,6 +198,7 @@ export default function App() {
 
     setPendingTribute(null);
     setPromptSelectionIds([]);
+    setDiscard(null);
     setOverrideOpen(false);
   }
 
@@ -229,6 +231,7 @@ export default function App() {
   function leaveDuel() {
     setPendingTribute(null);
     setPromptSelectionIds([]);
+    setDiscard(null);
     setOverrideOpen(false);
     setScreen("lobby");
   }
@@ -264,6 +267,11 @@ export default function App() {
   function handleAttack(target: LegalAttackTarget) {
     setPendingTribute(null);
     setGame((current) => attackWithSelectedCard(current, target));
+  }
+
+  function handleActivateSetCard(instanceId: string) {
+    setPendingTribute(null);
+    setGame((current) => activateSetCard(current, instanceId));
   }
 
   function togglePromptCandidate(candidateId: string) {
@@ -351,7 +359,53 @@ export default function App() {
 
   function handleAdvance() {
     setPendingTribute(null);
+
+    const endingTurn = getTurnFlowActionLabel(game) === "End Turn";
+    const handSize = game.player.hand.length;
+    if (endingTurn && handSize > HAND_SIZE_LIMIT) {
+      setDiscard({ requiredCount: handSize - HAND_SIZE_LIMIT, selectedIds: [] });
+      return;
+    }
+
     setGame((current) => continueTurnFlow(current));
+  }
+
+  function toggleDiscardCard(cardId: string) {
+    setDiscard((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (current.selectedIds.includes(cardId)) {
+        return { ...current, selectedIds: current.selectedIds.filter((id) => id !== cardId) };
+      }
+
+      if (current.selectedIds.length >= current.requiredCount) {
+        return current;
+      }
+
+      return { ...current, selectedIds: [...current.selectedIds, cardId] };
+    });
+  }
+
+  function confirmDiscard() {
+    if (!discard || discard.selectedIds.length !== discard.requiredCount) {
+      return;
+    }
+
+    const idsToDiscard = discard.selectedIds;
+    setGame((current) => {
+      const trimmed = idsToDiscard.reduce(
+        (state, instanceId) => overrideCardLocation(state, instanceId, { zone: "graveyard" }),
+        current,
+      );
+      return continueTurnFlow(trimmed);
+    });
+    setDiscard(null);
+  }
+
+  function cancelDiscard() {
+    setDiscard(null);
   }
 
   function handleOverride(instanceId: string, destination: Parameters<typeof overrideCardLocation>[2]) {
@@ -409,6 +463,8 @@ export default function App() {
             onSelectCard={selectCard}
             onPlaceCard={handlePlaceCard}
             onAttack={handleAttack}
+            onActivateSetCard={handleActivateSetCard}
+            canActivateSetCards={viewerActive}
             tributeSelection={isSpectator ? null : pendingTribute}
             onToggleTribute={toggleTributeSelection}
             onCancelTribute={() => setPendingTribute(null)}
@@ -423,6 +479,12 @@ export default function App() {
               unavailableCardIds={unavailableHandCardIds}
               onSelectCard={selectCard}
               onOpenOverride={() => setOverrideOpen(true)}
+              discardMode={discard !== null}
+              discardSelectedIds={discard?.selectedIds ?? []}
+              discardRequiredCount={discard?.requiredCount ?? 0}
+              onToggleDiscard={toggleDiscardCard}
+              onConfirmDiscard={confirmDiscard}
+              onCancelDiscard={cancelDiscard}
             />
           )}
 
@@ -440,7 +502,7 @@ export default function App() {
               canEnterBattle={canEnterBattle(game)}
               actionLabel={advanceLabel}
               onAdvance={isSpectator ? undefined : handleAdvance}
-              disabled={!viewerActive}
+              disabled={!viewerActive || discard !== null}
               disabledLabel={advanceLabel}
             />
             <PlayerStatusCard
@@ -451,33 +513,12 @@ export default function App() {
               readonly={isSpectator}
             />
           </div>
-
-          <TargetSelectionOverlay
-            prompt={promptView}
-            selectedCandidateIds={promptSelectionIds}
-            onToggleCandidate={togglePromptCandidate}
-          />
         </div>
 
         <aside className="side-rail">
           <CardDetail selectedCard={selectedCard} />
           {!isSpectator && (
             <div className="engine-surface-stack">
-              <PromptPanel
-                prompt={promptView}
-                selectedCandidateCount={promptSelectionIds.length}
-                onChoice={answerPromptChoice}
-                onConfirmSelection={confirmPromptSelection}
-                onClearSelection={() => setPromptSelectionIds([])}
-              />
-              <PriorityPanel
-                priority={priorityView}
-                onPassPriority={() => setGame((current) => passPriorityForPlayer(current))}
-              />
-              <ChainPanel
-                chain={chainView}
-                onResolveChain={() => setGame((current) => resolveCurrentChain(current))}
-              />
               <ActionLog entries={game.actionLog} />
             </div>
           )}
