@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, SlidersHorizontal, X } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import type { CardInstance } from "../types";
 import { CardView } from "./CardView";
 
@@ -9,13 +9,10 @@ interface HandProps {
   lastDrawnCardId: string | null;
   unavailableCardIds: string[];
   onSelectCard: (cardId: string) => void;
-  onOpenOverride: () => void;
+  onOpenOverride?: () => void;
   discardMode?: boolean;
   discardSelectedIds?: string[];
-  discardRequiredCount?: number;
   onToggleDiscard?: (cardId: string) => void;
-  onConfirmDiscard?: () => void;
-  onCancelDiscard?: () => void;
 }
 
 const BASE_GAP = 10;
@@ -30,10 +27,7 @@ export function Hand({
   onOpenOverride,
   discardMode = false,
   discardSelectedIds = [],
-  discardRequiredCount = 0,
   onToggleDiscard,
-  onConfirmDiscard,
-  onCancelDiscard,
 }: HandProps) {
   const fanRef = useRef<HTMLDivElement>(null);
   const [metrics, setMetrics] = useState({ containerWidth: 0, cardWidth: 0 });
@@ -94,8 +88,6 @@ export function Hand({
     return style;
   }
 
-  const remaining = discardRequiredCount - discardSelected.size;
-
   return (
     <section
       className={["hand-dock", "player-accent", discardMode ? "discard-mode" : ""]
@@ -103,47 +95,21 @@ export function Hand({
         .join(" ")}
       aria-label="Player hand"
     >
-      <div className="hand-actions" aria-label="Manual card tools">
-        <button
-          type="button"
-          className="hand-action-btn"
-          onClick={onOpenOverride}
-          disabled={discardMode}
-        >
-          <SlidersHorizontal size={15} />
-          Override
-        </button>
-      </div>
+      {onOpenOverride ? (
+        <div className="hand-actions" aria-label="Manual card tools">
+          <button
+            type="button"
+            className="hand-action-btn"
+            onClick={onOpenOverride}
+            disabled={discardMode}
+          >
+            <SlidersHorizontal size={15} />
+            Override
+          </button>
+        </div>
+      ) : null}
 
       <div className="hand-main">
-        {discardMode ? (
-          <div className="hand-discard-bar" role="status">
-            <span className="hand-discard-summary">
-              {remaining > 0
-                ? `Select ${remaining} more card${remaining === 1 ? "" : "s"} to discard`
-                : "Ready to discard"}
-              <span className="hand-discard-count">
-                {discardSelected.size}/{discardRequiredCount}
-              </span>
-            </span>
-            <div className="hand-discard-actions">
-              <button type="button" className="hand-discard-cancel" onClick={onCancelDiscard}>
-                <X size={14} />
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="hand-discard-confirm"
-                onClick={onConfirmDiscard}
-                disabled={remaining !== 0}
-              >
-                <Check size={14} />
-                Discard &amp; end turn
-              </button>
-            </div>
-          </div>
-        ) : null}
-
         <div className="hand-fan" ref={fanRef}>
           {cards.map((card, index) => {
             const marked = discardSelected.has(card.instanceId);

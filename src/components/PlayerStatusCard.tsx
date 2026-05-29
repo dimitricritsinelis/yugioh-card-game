@@ -4,11 +4,12 @@ interface PlayerStatusCardProps {
   name: string;
   lp: number;
   accent: "player" | "opponent";
-  onEditLp: (value: number) => void;
+  onEditLp?: (value: number) => void;
   readonly?: boolean;
 }
 
 export function PlayerStatusCard({ name, lp, accent, onEditLp, readonly = false }: PlayerStatusCardProps) {
+  const canEdit = !readonly && Boolean(onEditLp);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -29,7 +30,7 @@ export function PlayerStatusCard({ name, lp, accent, onEditLp, readonly = false 
     setEditing(false);
     const next = Number(draft);
     if (draft.trim() !== "" && Number.isFinite(next)) {
-      onEditLp(next);
+      onEditLp?.(next);
     }
   }
 
@@ -54,7 +55,7 @@ export function PlayerStatusCard({ name, lp, accent, onEditLp, readonly = false 
           }}
           aria-label={`${name} Life Points`}
         />
-      ) : readonly ? (
+      ) : !canEdit ? (
         <p className="lp-readout" aria-label={`${name} Life Points`}>
           <strong>{lp.toLocaleString()}</strong>
           <span>LP</span>
