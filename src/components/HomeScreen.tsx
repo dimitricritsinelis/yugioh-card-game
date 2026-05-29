@@ -10,14 +10,9 @@ export function HomeScreen({ onPlay }: HomeScreenProps) {
         <header className="home-brand">
           <p className="home-eyebrow">Goat Format</p>
           <h1 className="home-title">GOAT DUEL</h1>
-          <p className="home-subtitle">A local browser prototype</p>
+          <p className="home-subtitle">Online GOAT-format duels</p>
         </header>
-        <button
-          type="button"
-          className="home-play-btn"
-          onClick={onPlay}
-          autoFocus
-        >
+        <button type="button" className="home-play-btn" onClick={onPlay} autoFocus>
           Play
         </button>
       </div>

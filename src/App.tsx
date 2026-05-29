@@ -1,32 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Copy } from "lucide-react";
 import { loadCards } from "./cardData";
 import {
-  activateSetCard,
-  attackWithSelectedCard,
-  answerActivePrompt,
-  canEnterBattle,
-  continueTurnFlow,
   createDemoGameState,
   createInitialGameState,
   findCardLocation,
-  getChainView,
-  getLegalAttackTargetsForCard,
-  getLegalPlacementsForCard,
-  getOverrideCardEntries,
-  getPriorityView,
-  getPromptView,
-  getTurnFlowActionLabel,
-  getUnavailableHandCardIds,
-  isViewerActivePlayer,
-  overrideCardLocation,
-  passPriorityForPlayer,
-  resolveCurrentChain,
-  type LegalAttackTarget,
   getSelectedCardInstance,
+  type LegalAttackTarget,
   type LegalPlacementAction,
-  placeSelectedCard,
-  setLifePoints,
 } from "./gameLogic";
 import { ActionPanel } from "./components/ActionPanel";
 import { ActionLog } from "./components/ActionLog";
@@ -36,10 +17,12 @@ import { Hand } from "./components/Hand";
 import { HomeScreen } from "./components/HomeScreen";
 import { LobbyScreen } from "./components/LobbyScreen";
 import { MusicPlayer, type MusicPlayerHandle } from "./components/MusicPlayer";
-import { OverridePanel } from "./components/OverridePanel";
+import { HandStatusCard } from "./components/HandStatusCard";
 import { PhaseHud } from "./components/PhaseHud";
 import { PlayerStatusCard } from "./components/PlayerStatusCard";
-import type { CardRecord, Screen, SessionState } from "./types";
+import { useOnlineGame } from "./online/client/useOnlineGame";
+import type { OnlineCommand } from "./online/types";
+import type { CardRecord, Screen } from "./types";
 
 // Dev-only: `?scenario=demo` boots a fully populated board for visual testing.
 // `import.meta.env.DEV` is false in production builds, so this never ships.
@@ -54,13 +37,10 @@ interface PendingTributeSelection {
   lockedTributeIds: string[];
 }
 
-function buildGameState(cards: CardRecord[], viewerId: "P1" | "P2" = "P1") {
-  return demoScenarioActive
-    ? createDemoGameState(cards)
-    : createInitialGameState(cards, {
-        opponentBehavior: import.meta.env.DEV && viewerId === "P1" ? "passive-board-filler" : "none",
-        viewerId,
-      });
+// The local `game` state only ever backs the dev `?scenario=demo` board; live
+// play always flows through the online view.
+function buildGameState(cards: CardRecord[]) {
+  return demoScenarioActive ? createDemoGameState(cards) : createInitialGameState(cards);
 }
 
 const HAND_SIZE_LIMIT = 6;
@@ -68,14 +48,12 @@ const HAND_SIZE_LIMIT = 6;
 const DEFAULT_P1_NAME = "Player 1";
 const DEFAULT_P2_NAME = "Player 2";
 
-const DEFAULT_SESSION: SessionState = {
-  p1Name: "",
-  p2Name: "",
-  spectatorName: "",
-  viewerRole: "P1",
-};
-
-const initialScreen: Screen = demoScenarioActive ? "game" : "home";
+const initialOnlineCode = initialCodeFromPath();
+const initialScreen: Screen = demoScenarioActive
+  ? "game"
+  : initialOnlineCode || window.location.pathname === "/online"
+    ? "lobby"
+    : "home";
 
 function resolveDisplayName(raw: string, fallback: string): string {
   const trimmed = raw.trim();
@@ -83,19 +61,20 @@ function resolveDisplayName(raw: string, fallback: string): string {
 }
 
 export default function App() {
-  const [cards, setCards] = useState<CardRecord[]>([]);
   const [game, setGame] = useState(() => createInitialGameState([]));
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [errorTitle, setErrorTitle] = useState("Card bundle unavailable");
   const [errorMessage, setErrorMessage] = useState("");
   const [pendingTribute, setPendingTribute] = useState<PendingTributeSelection | null>(null);
-  const [promptSelectionIds, setPromptSelectionIds] = useState<string[]>([]);
   const [discard, setDiscard] = useState<{ requiredCount: number; selectedIds: string[] } | null>(null);
   const [screen, setScreen] = useState<Screen>(initialScreen);
-  const [session, setSession] = useState<SessionState>(DEFAULT_SESSION);
+  const [playerName, setPlayerName] = useState("");
   const [musicSlotEl, setMusicSlotEl] = useState<HTMLDivElement | null>(null);
-  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [onlineCodeInput, setOnlineCodeInput] = useState(initialOnlineCode ?? "");
+  const [onlineSelectedCardId, setOnlineSelectedCardId] = useState<string | null>(null);
   const musicRef = useRef<MusicPlayerHandle>(null);
+  const online = useOnlineGame(true, initialOnlineCode);
+  const initialOnlineJoinAttempted = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +85,6 @@ export default function App() {
           return;
         }
 
-        setCards(loadedCards);
         try {
           setGame(buildGameState(loadedCards));
         } catch (error: unknown) {
@@ -134,115 +112,89 @@ export default function App() {
     };
   }, []);
 
-  const selectedCard = useMemo(() => getSelectedCardInstance(game), [game]);
+  // A shared `/duel/:code` link peeks the game so the lobby can offer the open seat.
+  useEffect(() => {
+    if (!initialOnlineCode || initialOnlineJoinAttempted.current) {
+      return;
+    }
+
+    initialOnlineJoinAttempted.current = true;
+    void online.joinAsSpectator(initialOnlineCode).catch(() => undefined);
+  }, [online, initialOnlineCode]);
+
+  const onlineProjectedGame = useMemo(
+    () =>
+      online.gameState
+        ? {
+            ...online.gameState,
+            selectedCardId: onlineSelectedCardId,
+          }
+        : null,
+    [online.gameState, onlineSelectedCardId],
+  );
+  const onlineMode = Boolean(online.view && onlineProjectedGame && (screen === "game" || screen === "spectator"));
+  const renderedGame = onlineMode && onlineProjectedGame ? onlineProjectedGame : game;
+
+  const selectedCard = useMemo(() => getSelectedCardInstance(renderedGame), [renderedGame]);
   const selectedLocation = useMemo(() => {
-    if (!game.selectedCardId) {
+    if (!renderedGame.selectedCardId) {
       return null;
     }
 
-    return findCardLocation(game.player, game.selectedCardId);
-  }, [game.player, game.selectedCardId]);
+    return findCardLocation(renderedGame.player, renderedGame.selectedCardId);
+  }, [renderedGame.player, renderedGame.selectedCardId]);
 
-  const legalPlacements = useMemo(
-    () => getLegalPlacementsForCard(game, selectedLocation?.area === "hand" ? game.selectedCardId : null),
-    [game, selectedLocation],
+  const legalPlacements = useMemo(() => {
+    if (!onlineMode) {
+      return [];
+    }
+
+    const selectedHandCardId = selectedLocation?.area === "hand" ? renderedGame.selectedCardId : null;
+    return selectedHandCardId
+      ? [...(online.view?.legal.placements ?? [])].filter(
+          (placement) => placement.instanceId === selectedHandCardId,
+        )
+      : [];
+  }, [online.view?.legal.placements, onlineMode, renderedGame, selectedLocation]);
+  const legalAttackTargets = useMemo(() => {
+    if (!onlineMode) {
+      return [];
+    }
+
+    const selectedAttackerId = selectedLocation?.area === "monster" ? renderedGame.selectedCardId : null;
+    return selectedAttackerId
+      ? [...(online.view?.legal.attacks ?? [])].filter(
+          (target) => target.attackerInstanceId === selectedAttackerId,
+        )
+      : [];
+  }, [online.view?.legal.attacks, onlineMode, renderedGame, selectedLocation]);
+  const unavailableHandCardIds = useMemo(
+    () => (onlineMode ? [...(online.view?.legal.unavailableHandCardIds ?? [])] : []),
+    [online.view?.legal.unavailableHandCardIds, onlineMode],
   );
-  const legalAttackTargets = useMemo(
-    () => getLegalAttackTargetsForCard(game, selectedLocation?.area === "monster" ? game.selectedCardId : null),
-    [game, selectedLocation],
-  );
-  const unavailableHandCardIds = useMemo(() => getUnavailableHandCardIds(game), [game]);
-  const promptView = useMemo(() => getPromptView(game), [game]);
-  const priorityView = useMemo(() => getPriorityView(game), [game]);
-  const chainView = useMemo(() => getChainView(game), [game]);
-  const overrideEntries = useMemo(() => getOverrideCardEntries(game), [game]);
 
-  useEffect(() => {
-    setPromptSelectionIds([]);
-  }, [promptView.activePrompt?.id]);
-
-  function resetGame() {
-    if (cards.length === 0) {
-      return;
-    }
-
-    const viewerId = game.viewerId ?? "P1";
+  async function submitOnlineCommand(command: OnlineCommand) {
     try {
-      setGame(buildGameState(cards, viewerId));
-    } catch (error: unknown) {
-      setErrorTitle("Duel setup unavailable");
-      setErrorMessage(errorMessageFromUnknown(error));
-      setLoadState("error");
-      return;
+      await online.submitOnlineCommand(command);
+      setOnlineSelectedCardId(null);
+      setPendingTribute(null);
+    } catch {
+      // The hook owns the visible online error message.
     }
-
-    setPendingTribute(null);
-    setPromptSelectionIds([]);
-    setDiscard(null);
-    setOverrideOpen(false);
-  }
-
-  function startDuel(viewerId: "P1" | "P2") {
-    if (cards.length === 0) {
-      return;
-    }
-
-    try {
-      setGame(buildGameState(cards, viewerId));
-    } catch (error: unknown) {
-      setErrorTitle("Duel setup unavailable");
-      setErrorMessage(errorMessageFromUnknown(error));
-      setLoadState("error");
-      return;
-    }
-
-    setPendingTribute(null);
-    setPromptSelectionIds([]);
-    setDiscard(null);
-    setOverrideOpen(false);
-  }
-
-  function enterGame(role: "P1" | "P2") {
-    startDuel(role);
-    setSession((current) => ({
-      ...current,
-      p1Name: resolveDisplayName(current.p1Name, DEFAULT_P1_NAME),
-      p2Name: resolveDisplayName(current.p2Name, DEFAULT_P2_NAME),
-      viewerRole: role,
-    }));
-    setScreen("game");
-  }
-
-  function enterSpectator() {
-    startDuel("P1");
-    setSession((current) => ({
-      ...current,
-      p1Name: resolveDisplayName(current.p1Name, DEFAULT_P1_NAME),
-      p2Name: resolveDisplayName(current.p2Name, DEFAULT_P2_NAME),
-      viewerRole: "spectator",
-    }));
-    setScreen("spectator");
-  }
-
-  function updateSession(changes: Partial<SessionState>) {
-    setSession((current) => ({ ...current, ...changes }));
   }
 
   function leaveDuel() {
+    void online.leaveOnlineSeat().catch(() => undefined);
     setPendingTribute(null);
-    setPromptSelectionIds([]);
     setDiscard(null);
-    setOverrideOpen(false);
+    setOnlineSelectedCardId(null);
     setScreen("lobby");
   }
 
   function selectCard(cardId: string) {
     // Clicking the already-selected card again deselects it ("unclick").
     setPendingTribute(null);
-    setGame((current) => ({
-      ...current,
-      selectedCardId: current.selectedCardId === cardId ? null : cardId,
-    }));
+    setOnlineSelectedCardId((current) => (current === cardId ? null : cardId));
   }
 
   function handlePlaceCard(placement: LegalPlacementAction) {
@@ -261,61 +213,33 @@ export default function App() {
     }
 
     setPendingTribute(null);
-    setGame((current) => placeSelectedCard(current, placement.intent, placement.zoneKind, placement.zoneIndex));
+    void submitOnlineCommand({
+      type: "play-card",
+      instanceId: placement.instanceId,
+      intent: placement.intent,
+      zoneKind: placement.zoneKind,
+      zoneIndex: placement.zoneIndex,
+    });
   }
 
   function handleAttack(target: LegalAttackTarget) {
     setPendingTribute(null);
-    setGame((current) => attackWithSelectedCard(current, target));
+    void submitOnlineCommand({
+      type: "attack",
+      attackerInstanceId: target.attackerInstanceId,
+      target:
+        target.target.kind === "direct"
+          ? { kind: "direct" }
+          : { kind: "monster-zone", zoneIndex: target.target.zoneIndex },
+    });
   }
 
   function handleActivateSetCard(instanceId: string) {
     setPendingTribute(null);
-    setGame((current) => activateSetCard(current, instanceId));
-  }
-
-  function togglePromptCandidate(candidateId: string) {
-    const maxSelections = promptView.activePrompt?.max ?? 0;
-
-    setPromptSelectionIds((current) => {
-      if (current.includes(candidateId)) {
-        return current.filter((id) => id !== candidateId);
-      }
-
-      if (maxSelections > 0 && current.length >= maxSelections) {
-        return current;
-      }
-
-      return [...current, candidateId];
+    void submitOnlineCommand({
+      type: "activate-set-card",
+      instanceId,
     });
-  }
-
-  function confirmPromptSelection() {
-    if (!promptView.activePrompt) {
-      return;
-    }
-
-    setGame((current) =>
-      answerActivePrompt(current, {
-        promptId: promptView.activePrompt!.id,
-        candidateIds: promptSelectionIds,
-      }),
-    );
-    setPromptSelectionIds([]);
-  }
-
-  function answerPromptChoice(choiceIds: string[]) {
-    if (!promptView.activePrompt) {
-      return;
-    }
-
-    setGame((current) =>
-      answerActivePrompt(current, {
-        promptId: promptView.activePrompt!.id,
-        choiceIds,
-      }),
-    );
-    setPromptSelectionIds([]);
   }
 
   function toggleTributeSelection(instanceId: string) {
@@ -344,30 +268,28 @@ export default function App() {
     }
 
     const { placement, selectedTributeIds } = pendingTribute;
-
-    setGame((current) =>
-      placeSelectedCard(
-        { ...current, selectedCardId: placement.instanceId },
-        placement.intent,
-        placement.zoneKind,
-        placement.zoneIndex,
-        selectedTributeIds,
-      ),
-    );
+    void submitOnlineCommand({
+      type: "play-card",
+      instanceId: placement.instanceId,
+      intent: placement.intent,
+      zoneKind: placement.zoneKind,
+      zoneIndex: placement.zoneIndex,
+      tributeInstanceIds: selectedTributeIds,
+    });
     setPendingTribute(null);
   }
 
   function handleAdvance() {
     setPendingTribute(null);
 
-    const endingTurn = getTurnFlowActionLabel(game) === "End Turn";
-    const handSize = game.player.hand.length;
+    const endingTurn = online.view?.legal.advanceLabel === "End Turn";
+    const handSize = renderedGame.player.hand.length;
     if (endingTurn && handSize > HAND_SIZE_LIMIT) {
       setDiscard({ requiredCount: handSize - HAND_SIZE_LIMIT, selectedIds: [] });
       return;
     }
 
-    setGame((current) => continueTurnFlow(current));
+    void submitOnlineCommand({ type: "advance-turn-flow" });
   }
 
   function toggleDiscardCard(cardId: string) {
@@ -393,14 +315,7 @@ export default function App() {
       return;
     }
 
-    const idsToDiscard = discard.selectedIds;
-    setGame((current) => {
-      const trimmed = idsToDiscard.reduce(
-        (state, instanceId) => overrideCardLocation(state, instanceId, { zone: "graveyard" }),
-        current,
-      );
-      return continueTurnFlow(trimmed);
-    });
+    void submitOnlineCommand({ type: "discard-and-advance", discardInstanceIds: discard.selectedIds });
     setDiscard(null);
   }
 
@@ -408,13 +323,60 @@ export default function App() {
     setDiscard(null);
   }
 
-  function handleOverride(instanceId: string, destination: Parameters<typeof overrideCardLocation>[2]) {
-    setPendingTribute(null);
-    setGame((current) => overrideCardLocation(current, instanceId, destination));
+  async function hostDuel() {
+    const name = resolveDisplayName(playerName, DEFAULT_P1_NAME);
+    try {
+      await online.createOnlineDuel(name);
+      setOnlineSelectedCardId(null);
+      setScreen("game");
+    } catch {
+      // The hook exposes the visible online error.
+    }
   }
 
-  function handleSetLp(side: "player" | "opponent", value: number) {
-    setGame((current) => setLifePoints(current, side, value));
+  async function joinDuel() {
+    const code = onlineCodeInput.trim();
+    if (!code) {
+      return;
+    }
+
+    const name = resolveDisplayName(playerName, DEFAULT_P2_NAME);
+    // The host always takes P1, so the joiner takes P2 — unless a peeked view
+    // shows P1 is the only open seat.
+    const role: "P1" | "P2" =
+      online.view && !online.view.seats.P1.occupied && online.view.seats.P2.occupied ? "P1" : "P2";
+    try {
+      await online.claimOnlineSeat(role, name, online.view?.gameId ?? code);
+      setOnlineSelectedCardId(null);
+      setScreen("game");
+    } catch {
+      // The hook exposes the visible online error.
+    }
+  }
+
+  async function spectateDuel() {
+    const code = onlineCodeInput.trim();
+    try {
+      if (!online.view && code) {
+        await online.joinAsSpectator(code);
+      }
+
+      if (online.view || code) {
+        setOnlineSelectedCardId(null);
+        setScreen("spectator");
+      }
+    } catch {
+      // The hook exposes the visible online error.
+    }
+  }
+
+  function copyShareLink() {
+    const code = online.view?.code;
+    if (!code) {
+      return;
+    }
+
+    void navigator.clipboard?.writeText(`${window.location.origin}/duel/${code}`).catch(() => undefined);
   }
 
   if (loadState === "loading") {
@@ -423,7 +385,7 @@ export default function App() {
         <div className="stone-panel status-panel">
           <div className="loader-mark" />
           <h1>Loading GOAT card pool</h1>
-          <p>Preparing the local duel terminal.</p>
+          <p>Preparing the online duel terminal.</p>
         </div>
       </main>
     );
@@ -444,27 +406,45 @@ export default function App() {
     );
   }
 
-  const isSpectator = session.viewerRole === "spectator";
-  const viewerIsP2 = session.viewerRole === "P2";
-  const viewerName = viewerIsP2 ? session.p2Name : session.p1Name;
-  const opponentName = viewerIsP2 ? session.p1Name : session.p2Name;
-  const viewerActive = !isSpectator && isViewerActivePlayer(game);
-  const advanceLabel = viewerActive
-    ? getTurnFlowActionLabel(game)
-    : `Waiting on ${opponentName}`;
+  const isSpectator = onlineMode ? online.view?.viewerRole === "spectator" : false;
+  const viewerIsP2 = onlineMode ? online.view?.viewerId === "P2" : false;
+  const viewerName = onlineMode ? onlineDisplayName(online.view, viewerIsP2 ? "P2" : "P1") : DEFAULT_P1_NAME;
+  const opponentName = onlineMode ? onlineDisplayName(online.view, viewerIsP2 ? "P1" : "P2") : DEFAULT_P2_NAME;
+  const viewerActive = onlineMode
+    ? Boolean(
+        online.view?.viewerId &&
+          online.view.activePlayer === online.view.viewerId &&
+          !online.view.winner &&
+          !online.pending,
+      )
+    : false;
+  const advanceLabel = onlineMode
+    ? isSpectator
+      ? "Spectating"
+      : online.view?.legal.advanceLabel ?? "Waiting"
+    : "Main Phase";
+  const canAdvance = onlineMode ? Boolean(online.view?.legal.canAdvance && !online.pending) : false;
+  const canEnterBattlePhase = onlineMode ? online.view?.legal.advanceLabel === "Battle Phase" : false;
+  const waitingForOpponent = onlineMode && !isSpectator && online.view?.status === "waiting";
   const duelView = (
     <main className={`screen ${isSpectator ? "spectator-screen" : ""}`}>
       <section className="duel-shell" aria-label={isSpectator ? "GOAT duel spectator view" : "GOAT duel test screen"}>
+        {onlineMode ? (
+          <div className={`online-game-status online-game-status-${online.connectionStatus}`} role="status">
+            <span>{online.connectionStatus}</span>
+            {online.message ? <strong>{online.message}</strong> : null}
+          </div>
+        ) : null}
         <div className="table-column">
           <Board
-            game={game}
-            legalPlacements={isSpectator ? [] : legalPlacements}
-            legalAttackTargets={isSpectator ? [] : legalAttackTargets}
+            game={renderedGame}
+            legalPlacements={isSpectator || online.pending ? [] : legalPlacements}
+            legalAttackTargets={isSpectator || online.pending ? [] : legalAttackTargets}
             onSelectCard={selectCard}
             onPlaceCard={handlePlaceCard}
             onAttack={handleAttack}
             onActivateSetCard={handleActivateSetCard}
-            canActivateSetCards={viewerActive}
+            canActivateSetCards={viewerActive && !online.pending}
             tributeSelection={isSpectator ? null : pendingTribute}
             onToggleTribute={toggleTributeSelection}
             onCancelTribute={() => setPendingTribute(null)}
@@ -473,69 +453,69 @@ export default function App() {
 
           {isSpectator ? null : (
             <Hand
-              cards={game.player.hand}
-              selectedCardId={game.selectedCardId}
-              lastDrawnCardId={game.lastDrawnCardId}
+              cards={renderedGame.player.hand}
+              selectedCardId={renderedGame.selectedCardId}
+              lastDrawnCardId={renderedGame.lastDrawnCardId}
               unavailableCardIds={unavailableHandCardIds}
               onSelectCard={selectCard}
-              onOpenOverride={() => setOverrideOpen(true)}
               discardMode={discard !== null}
               discardSelectedIds={discard?.selectedIds ?? []}
-              discardRequiredCount={discard?.requiredCount ?? 0}
               onToggleDiscard={toggleDiscardCard}
-              onConfirmDiscard={confirmDiscard}
-              onCancelDiscard={cancelDiscard}
             />
           )}
 
           <div className="right-rail" aria-label="Match status">
-            <PlayerStatusCard
-              name={opponentName}
-              lp={game.opponent.lp}
-              accent="opponent"
-              onEditLp={(value) => handleSetLp("opponent", value)}
-              readonly={isSpectator}
-            />
+            <PlayerStatusCard name={opponentName} lp={renderedGame.opponent.lp} accent="opponent" readonly />
             <PhaseHud
-              phase={game.phase}
-              turn={game.turn}
-              canEnterBattle={canEnterBattle(game)}
+              phase={renderedGame.phase}
+              turn={renderedGame.turn}
+              canEnterBattle={canEnterBattlePhase}
               actionLabel={advanceLabel}
               onAdvance={isSpectator ? undefined : handleAdvance}
-              disabled={!viewerActive || discard !== null}
+              disabled={!canAdvance || discard !== null}
               disabledLabel={advanceLabel}
             />
-            <PlayerStatusCard
-              name={viewerName}
-              lp={game.player.lp}
-              accent="player"
-              onEditLp={(value) => handleSetLp("player", value)}
-              readonly={isSpectator}
-            />
+            {isSpectator ? null : (
+              <HandStatusCard
+                handCount={renderedGame.player.hand.length}
+                handLimit={HAND_SIZE_LIMIT}
+                discard={discard}
+                onConfirmDiscard={confirmDiscard}
+                onCancelDiscard={cancelDiscard}
+              />
+            )}
+            <PlayerStatusCard name={viewerName} lp={renderedGame.player.lp} accent="player" readonly />
           </div>
+
+          {waitingForOpponent ? (
+            <div className="waiting-overlay" role="status">
+              <div className="waiting-overlay-card">
+                <span className="loader-mark" aria-hidden="true" />
+                <p className="waiting-overlay-title">Waiting for opponent…</p>
+                <p className="waiting-overlay-sub">Share this code to invite a player.</p>
+                <div className="online-code-card waiting-overlay-code">
+                  <span>Code</span>
+                  <strong>{online.view?.code}</strong>
+                </div>
+                <button type="button" className="lobby-cta waiting-overlay-copy" onClick={copyShareLink}>
+                  <Copy size={15} />
+                  Copy invite link
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <aside className="side-rail">
           <CardDetail selectedCard={selectedCard} />
-          {!isSpectator && (
-            <div className="engine-surface-stack">
-              <ActionLog entries={game.actionLog} />
-            </div>
-          )}
+          <div className="engine-surface-stack">
+            <ActionLog entries={renderedGame.actionLog} />
+          </div>
           <div className="rail-footer">
             <div ref={setMusicSlotEl} className="music-rail-slot" />
-            <ActionPanel onReset={isSpectator ? undefined : resetGame} onLeave={leaveDuel} />
+            <ActionPanel onLeave={leaveDuel} />
           </div>
         </aside>
-
-        {!isSpectator && overrideOpen ? (
-          <OverridePanel
-            entries={overrideEntries}
-            player={game.player}
-            onClose={() => setOverrideOpen(false)}
-            onOverride={handleOverride}
-          />
-        ) : null}
       </section>
     </main>
   );
@@ -553,10 +533,17 @@ export default function App() {
   } else if (screen === "lobby") {
     screenContent = (
       <LobbyScreen
-        session={session}
-        onUpdateSession={updateSession}
-        onEnterGame={enterGame}
-        onEnterSpectator={enterSpectator}
+        playerName={playerName}
+        onPlayerName={setPlayerName}
+        codeInput={onlineCodeInput}
+        onCodeInput={setOnlineCodeInput}
+        pending={online.pending}
+        view={online.view}
+        message={online.message}
+        connectionStatus={online.connectionStatus}
+        onHost={hostDuel}
+        onJoin={joinDuel}
+        onSpectate={spectateDuel}
         onBack={() => setScreen("home")}
       />
     );
@@ -576,4 +563,16 @@ export default function App() {
 
 function errorMessageFromUnknown(error: unknown): string {
   return error instanceof Error ? error.message : "Unable to prepare the duel.";
+}
+
+function initialCodeFromPath(): string | null {
+  const match = /^\/duel\/([^/?#]+)/.exec(window.location.pathname);
+  return match ? decodeURIComponent(match[1]).toUpperCase() : null;
+}
+
+function onlineDisplayName(
+  view: ReturnType<typeof useOnlineGame>["view"],
+  role: "P1" | "P2",
+): string {
+  return view?.seats[role].playerName ?? (role === "P1" ? DEFAULT_P1_NAME : DEFAULT_P2_NAME);
 }

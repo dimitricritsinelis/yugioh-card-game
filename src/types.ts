@@ -98,6 +98,8 @@ export interface GameState {
   viewerId?: import("./engine").PlayerId;
   opponentBehavior?: import("./engine").OpponentBehavior;
   opponentTargetMonsterCount?: number;
+  /** Browser-safe online spectator projections may know the deck count without deck identity. */
+  playerDeckCount?: number;
   player: PlayerState;
   opponent: OpponentState;
   phase: Phase;

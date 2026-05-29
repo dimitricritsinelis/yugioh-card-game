@@ -21,6 +21,8 @@ npm run build
 npm run preview
 ```
 
+`npm run dev` includes a Vite-only `/api/game` middleware backed by in-memory state, so `/online` and `/duel/:code` work locally without Supabase. Deployed online play still uses the Vercel function plus Supabase tables, migrations, and environment variables described in `docs/online-multiplayer.md`.
+
 ## Test Decks
 
 Default local duels use character-themed GOAT test decks from the local card

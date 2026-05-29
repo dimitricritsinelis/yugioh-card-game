@@ -4,6 +4,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { cp, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { handleNodeGameApi } from "./api/game";
+import { InMemoryGameStore, OnlineGameService } from "./src/online/server/gameService";
 
 const projectRoot = ".";
 
@@ -24,8 +26,34 @@ function copyPublicAssets() {
   };
 }
 
+function localOnlineApi() {
+  let localService: OnlineGameService | null = null;
+
+  function getLocalService(): OnlineGameService {
+    if (!localService) {
+      localService = new OnlineGameService(new InMemoryGameStore(), {
+        seatTokenSalt: "local-dev-seat-token-salt",
+      });
+    }
+
+    return localService;
+  }
+
+  return {
+    name: "local-online-api",
+    apply: "serve" as const,
+    configureServer(server: { middlewares: { use: (path: string, handler: (request: unknown, response: unknown) => void) => void } }) {
+      server.middlewares.use("/api/game", (request: unknown, response: unknown) => {
+        void handleNodeGameApi(request as never, response as never, {
+          service: getLocalService(),
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), copyPublicAssets()],
+  plugins: [react(), localOnlineApi(), copyPublicAssets()],
   build: {
     copyPublicDir: false,
   },

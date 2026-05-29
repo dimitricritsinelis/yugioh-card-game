@@ -1,7 +1,9 @@
 import { CARD_DECK_IMAGE_URL } from "../cardData";
 import type { LegalAttackTarget, LegalPlacementAction } from "../gameLogic";
-import type { CardAction, CardInstance, GameState, ZoneKind } from "../types";
+import type { CardAction, CardInstance, GameState, ZoneCard, ZoneKind } from "../types";
 import { CardView } from "./CardView";
+
+type BoardZone = ZoneCard | boolean | null;
 
 interface BoardProps {
   game: GameState;
@@ -81,7 +83,7 @@ export function Board({
       </div>
 
       <div className="board-side player-side">
-        <DeckPile deckCount={game.player.deck.length} monsterRowFirst />
+        <DeckPile deckCount={game.playerDeckCount ?? game.player.deck.length} monsterRowFirst />
         <div className="zone-grid">
           <ZoneRow
             label="Monster"
@@ -283,9 +285,9 @@ function placementLabel(placement: LegalPlacementAction): string {
 interface ZoneRowProps {
   label: string;
   accent: "player" | "opponent";
-  hiddenZones?: GameState["opponent"]["monsterZones"];
+  hiddenZones?: BoardZone[];
   zoneKind?: ZoneKind;
-  cards?: GameState["player"]["monsterZones"];
+  cards?: BoardZone[];
   selectedCardId?: string | null;
   lastPlacedCardId?: string | null;
   legalPlacements?: LegalPlacementAction[];

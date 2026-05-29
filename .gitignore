@@ -32,3 +32,5 @@ card_scraper/
 
 # Keep the runtime card bundle checked in for the Vite app.
 !public/yugioh_cards
+.vercel
+supabase/.temp/
