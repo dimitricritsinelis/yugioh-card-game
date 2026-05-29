@@ -65,6 +65,8 @@ export interface ZoneCard {
   instance: CardInstance;
   faceDown: boolean;
   stance: "attack" | "set" | "activated";
+  /** Turn this card was Set face-down, when known. Gates Trap activation timing. */
+  setTurn?: number | null;
 }
 
 export interface PlayerState {

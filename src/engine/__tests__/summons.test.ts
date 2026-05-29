@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
-import { isPlayableCard } from "../cards/coverage";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
 import { createDuel, reduceDuel } from "../reducer";
@@ -189,29 +188,21 @@ describe("core summon rules", () => {
     expect(result.events[0]).toMatchObject({ summonKind: "flip" });
   });
 
-  it("rejects Ritual and Fusion monsters through the Main Deck summon path", () => {
+  it("rejects Ritual monsters through the Main Deck summon path", () => {
     const state = advanceToM1(
-      createFixtureDuel(["Paladin of White Dragon", "Thousand-Eyes Restrict"], {
+      createFixtureDuel(["Paladin of White Dragon"], {
         allowUnsupportedCards: true,
       }).state,
     );
     const ritual = requireHandCard(state, "P1", "Paladin of White Dragon");
-    const fusion = requireHandCard(state, "P1", "Thousand-Eyes Restrict");
     const ritualResult = reduceDuel(state, {
       type: "normal-summon",
       playerId: "P1",
       instanceId: ritual.instanceId,
       zoneIndex: 0,
     });
-    const fusionResult = reduceDuel(state, {
-      type: "normal-summon",
-      playerId: "P1",
-      instanceId: fusion.instanceId,
-      zoneIndex: 0,
-    });
 
     expect(ritualResult.errors[0]?.message).toBe("Ritual Monsters cannot be Normal Summoned or Set.");
-    expect(fusionResult.errors[0]?.message).toContain("Fusion Monsters cannot be summoned");
     expect(JSON.stringify(state)).not.toContain("extraDeck");
   });
 });
@@ -254,7 +245,7 @@ function legalMainDeck(size: number): string[] {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        isPlayableCard(card.passcode, cards),
+        card.legality.goat_world_pool === true,
     )
     .map((card) => card.passcode);
 

@@ -7,45 +7,14 @@ export function cloneDuelState(state: DuelState): DuelState {
       P1: clonePlayerState(state.players.P1),
       P2: clonePlayerState(state.players.P2),
     },
-    priority: {
-      ...state.priority,
-      passedPlayerIds: [...state.priority.passedPlayerIds],
-    },
     damageStep: state.damageStep ? { ...state.damageStep } : undefined,
     cardDefinitions: state.cardDefinitions ? { ...state.cardDefinitions } : undefined,
-    cardScripts: state.cardScripts ? { ...state.cardScripts } : undefined,
-    implementedCardIds: state.implementedCardIds ? [...state.implementedCardIds] : undefined,
-    chain: state.chain.map((link) => ({ ...link })),
     pendingAttack: state.pendingAttack
       ? {
           ...state.pendingAttack,
           atkModifiers: state.pendingAttack.atkModifiers?.map((modifier) => ({ ...modifier })),
         }
       : state.pendingAttack,
-    lingeringEffects: state.lingeringEffects?.map((effect) => ({
-      ...effect,
-      definition: {
-        ...effect.definition,
-        statModifiers: effect.definition.statModifiers?.map((modifier) => ({
-          ...modifier,
-          target: { ...modifier.target },
-        })),
-        attackRestrictions: effect.definition.attackRestrictions?.map((restriction) => ({
-          ...restriction,
-          target: { ...restriction.target },
-        })),
-        directAttack: effect.definition.directAttack?.map((directAttack) => ({
-          ...directAttack,
-          target: { ...directAttack.target },
-        })),
-        piercingDamage: effect.definition.piercingDamage?.map((piercingDamage) => ({
-          ...piercingDamage,
-          target: { ...piercingDamage.target },
-        })),
-      },
-    })),
-    prompts: Object.fromEntries(Object.entries(state.prompts).map(([id, prompt]) => [id, { ...prompt }])),
-    pendingPromptIds: [...state.pendingPromptIds],
     eventIds: [...state.eventIds],
   };
 }

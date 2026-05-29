@@ -48,15 +48,6 @@ export function expectLP(state: DuelState, playerId: PlayerId, expected: number)
   expect(state.players[playerId].lp).toBe(expected);
 }
 
-export function expectChain(state: DuelState, expected: number | Partial<DuelState["chain"][number]>[]): void {
-  if (typeof expected === "number") {
-    expect(state.chain).toHaveLength(expected);
-    return;
-  }
-
-  expect(state.chain).toMatchObject(expected);
-}
-
 function cardInZone(state: DuelState, ref: ZoneRef): CardInstance | ZoneCard | null {
   const player = state.players[ref.playerId];
 

@@ -1,9 +1,7 @@
 import type { CardRecord, Phase } from "../../types";
-import { isPlayableCard } from "../cards/coverage";
 import type { CardInstance, FaceState, MonsterPosition, ZoneCard } from "../core/cardRefs";
 import { findCardByInstanceId } from "../core/zones";
 import { createDuel, type CreateDuelResult } from "../reducer";
-import { createPriorityWindow, type PriorityWindowReason } from "../rules/priority";
 import type { DeckList, PlayerId } from "../types";
 import type { DuelState, PlayerState } from "../core/state";
 
@@ -196,20 +194,6 @@ export function setPhase(
   };
 }
 
-export function setPriorityPlayer(
-  state: DuelState,
-  playerId: PlayerId,
-  reason: PriorityWindowReason = state.priority.reason,
-): DuelState {
-  const priority = createPriorityWindow(playerId, reason);
-
-  return {
-    ...state,
-    priority,
-    priorityPlayer: priority.holder,
-  };
-}
-
 function buildRiggedMainDeck(
   cards: readonly CardRecord[],
   priorityPasscodes: readonly string[],
@@ -226,7 +210,7 @@ function buildRiggedMainDeck(
         !prioritySet.has(card.passcode) &&
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        (allowUnsupportedCards || isPlayableCard(card.passcode, cards)),
+        !card.classifications?.includes("Fusion"),
     )
     .flatMap((card) => Array.from({ length: card.legality.max_copies }, () => card.passcode));
 

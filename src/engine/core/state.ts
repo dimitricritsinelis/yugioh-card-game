@@ -1,11 +1,6 @@
 import type { Phase } from "../../types";
-import type { CardScript } from "../cards/CardScript";
 import type { CardDefinition, CardId } from "../data/cardCatalog";
-import type { ActiveLingeringEffect } from "../effects/lingering";
 import type { DamageStepState } from "../rules/damageStep";
-import type { ChainLink } from "../rules/chain";
-import type { PriorityState } from "../rules/priority";
-import type { EnginePrompt } from "../result";
 import type { PlayerId, TurnMode } from "../types";
 import type { CardInstance, ZoneCard } from "./cardRefs";
 
@@ -44,22 +39,14 @@ export interface DuelState {
   readonly turn: number;
   readonly phase: Phase;
   readonly activePlayer: PlayerId;
-  readonly priorityPlayer: PlayerId;
   readonly turnFlags?: {
     readonly drawnThisTurn: boolean;
     readonly battlePhaseConducted: boolean;
   };
-  readonly priority: PriorityState;
   readonly damageStep?: DamageStepState;
   readonly cardDefinitions?: Readonly<Record<CardId, CardDefinition>>;
-  readonly cardScripts?: Readonly<Record<CardId, CardScript>>;
-  readonly implementedCardIds?: readonly CardId[];
   readonly players: Readonly<Record<PlayerId, PlayerState>>;
-  readonly chain: readonly ChainLink[];
   readonly pendingAttack?: PendingAttackState | null;
-  readonly lingeringEffects?: readonly ActiveLingeringEffect[];
-  readonly prompts: Readonly<Record<string, EnginePrompt>>;
-  readonly pendingPromptIds: readonly string[];
   readonly eventIds: readonly string[];
   readonly winner: PlayerId | null;
 }

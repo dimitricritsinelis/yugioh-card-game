@@ -10,9 +10,8 @@ import {
   putMonsterOnField,
   putSpellTrapOnField,
   setPhase,
-  setPriorityPlayer,
 } from "../testing/builders";
-import { expectChain, expectEvent, expectLP, expectZone } from "../testing/assertions";
+import { expectEvent, expectLP, expectZone } from "../testing/assertions";
 import { runScenario } from "../testing/scenarioRunner";
 
 const cards = cardsJson as CardRecord[];
@@ -80,29 +79,23 @@ describe("engine test fixture helpers", () => {
     });
   });
 
-  it("sets phase and priority state for focused scenario setup", () => {
+  it("sets phase state for focused scenario setup", () => {
     const state = createRiggedDuel(cards, { seed: "fixture-priority" }).state;
-    const battleState = setPriorityPlayer(setPhase(state, "BP", "P1"), "P2", "phase-start");
+    const battleState = setPhase(state, "BP", "P1");
 
     expect(battleState.phase).toBe("BP");
     expect(battleState.activePlayer).toBe("P1");
-    expect(battleState.priorityPlayer).toBe("P2");
-    expect(battleState.priority.holder).toBe("P2");
     expectLP(battleState, "P1", 8000);
-    expectChain(battleState, 0);
   });
 
   it("runs reducer scenarios and exposes aggregate events", () => {
     const battleOx = cardByName(cards, "Battle Ox");
-    const base = setPriorityPlayer(
-      setPhase(
-        createRiggedDuel(cards, {
-          seed: "fixture-scenario",
-          p1PriorityCards: [battleOx.passcode],
-        }).state,
-        "BP",
-        "P1",
-      ),
+    const base = setPhase(
+      createRiggedDuel(cards, {
+        seed: "fixture-scenario",
+        p1PriorityCards: [battleOx.passcode],
+      }).state,
+      "BP",
       "P1",
     );
     const withAttacker = putMonsterOnField(base, "P1", battleOx, 0, {

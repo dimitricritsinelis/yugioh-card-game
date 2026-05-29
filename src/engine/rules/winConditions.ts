@@ -1,7 +1,5 @@
 import type { CardId } from "../data/cardCatalog";
 import type { DuelState } from "../core/state";
-import type { CardCoverageRegistry } from "../cards/coverage";
-import { ENGINE_CARD_COVERAGE } from "../cards/registry";
 import type { PlayerId } from "../types";
 
 export const EXODIA_CARD_IDS = Object.freeze([
@@ -32,10 +30,6 @@ export function playerWithZeroLp(state: DuelState): PlayerId | null {
 }
 
 export function findExodiaWinner(state: DuelState): PlayerId | null {
-  if (!isExodiaWinEnabled(state.implementedCardIds ?? implementedCardIdsFromRegistry())) {
-    return null;
-  }
-
   for (const playerId of ["P1", "P2"] as const) {
     const handIds = new Set(state.players[playerId].hand.map((card) => card.cardId));
 
@@ -45,20 +39,6 @@ export function findExodiaWinner(state: DuelState): PlayerId | null {
   }
 
   return null;
-}
-
-export function isExodiaWinEnabled(implementedCardIds: readonly CardId[]): boolean {
-  const implemented = new Set(implementedCardIds);
-
-  return EXODIA_CARD_IDS.every((cardId) => implemented.has(cardId));
-}
-
-export function implementedCardIdsFromRegistry(
-  registry: CardCoverageRegistry = ENGINE_CARD_COVERAGE,
-): readonly CardId[] {
-  return Object.entries(registry).flatMap(([cardId, status]) =>
-    status === "goatTemplate" || status === "goatCustom" || status === "goatForbiddenButScripted" ? [cardId] : [],
-  );
 }
 
 export function opponentOf(playerId: PlayerId): PlayerId {

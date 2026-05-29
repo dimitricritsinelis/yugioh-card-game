@@ -119,13 +119,6 @@ function makeState(): CoreDuelState {
     turn: 1,
     phase: "M1",
     activePlayer: "P1",
-    priorityPlayer: "P1",
-    priority: {
-      holder: "P1",
-      passedPlayerIds: [],
-      reason: "phase-start",
-      status: "open",
-    },
     players: {
       P1: makePlayer("P1", {
         mainDeck: [cardInstance("p1-deck-a", "003", "P1")],
@@ -135,9 +128,6 @@ function makeState(): CoreDuelState {
       }),
       P2: makePlayer("P2"),
     },
-    chain: [],
-    prompts: {},
-    pendingPromptIds: [],
     eventIds: [],
     winner: null,
   };

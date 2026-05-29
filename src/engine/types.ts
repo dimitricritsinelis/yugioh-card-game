@@ -45,6 +45,8 @@ export interface DuelZoneCard {
   faceDown: boolean;
   position: BattlePosition;
   status: "set" | "summoned" | "activated" | "token";
+  /** Turn this card was Set face-down. Used to gate Trap activation timing. */
+  setTurn?: number | null;
 }
 
 export interface DuelPlayerState {
@@ -96,11 +98,8 @@ export interface DuelState {
   turn: number;
   phase: Phase;
   activePlayer: PlayerId;
-  priorityPlayer: PlayerId;
   battleSubstep: BattleSubstep;
   players: Record<PlayerId, DuelPlayerState>;
-  chain: ChainLink[];
-  pendingPrompts: DuelPrompt[];
   events: DuelEvent[];
   turnFlags: {
     drawnThisTurn: boolean;
@@ -113,6 +112,7 @@ export type OverrideCardDestination =
   | { zone: "hand" }
   | { zone: "graveyard" }
   | { zone: "banished" }
+  | { zone: "deck"; position: "top" | "bottom" }
   | {
       zone: "monsterZone";
       index: number;
@@ -161,18 +161,7 @@ export type DuelAction =
       attackerInstanceId: string;
       defenderInstanceId?: string;
     }
-  | { type: "pass-priority"; playerId: PlayerId }
-  | { type: "resolve-chain"; playerId: PlayerId }
-  | {
-      type: "answer-prompt";
-      playerId: PlayerId;
-      promptId: string;
-      choiceIds?: string[];
-      targetRefs?: ZoneRef[];
-      targetPlayerIds?: PlayerId[];
-      discardInstanceIds?: string[];
-      tributeInstanceIds?: string[];
-    }
+  | { type: "activate-set-card"; playerId: PlayerId; instanceId: string }
   | { type: "set-life-points"; playerId: PlayerId; targetPlayerId: PlayerId; value: number };
 
 export interface DuelResult {
@@ -215,11 +204,8 @@ export interface SerializedDuelState {
   turn: number;
   phase: Phase;
   activePlayer: PlayerId;
-  priorityPlayer: PlayerId;
   battleSubstep: BattleSubstep;
   players: Record<PlayerId, SerializedPlayerState>;
-  chain: ChainLink[];
-  pendingPrompts: DuelPrompt[];
   events: DuelEvent[];
   winner: PlayerId | null;
 }
@@ -253,42 +239,12 @@ export type {
   DuelState as CoreDuelState,
   PlayerState as CorePlayerState,
 } from "./core/state";
-export type { ChainLink as CoreChainLink } from "./rules/chain";
-export type {
-  ActivationRestrictionSpec as CoreActivationRestrictionSpec,
-  AttackRestrictionSpec as CoreAttackRestrictionSpec,
-  BattleStat as CoreBattleStat,
-  ContinuousEffectDefinition as CoreContinuousEffectDefinition,
-  ContinuousEffectSource as CoreContinuousEffectSource,
-  EffectNegationSpec as CoreEffectNegationSpec,
-  EffectTargetController as CoreEffectTargetController,
-  EffectTargetFilter as CoreEffectTargetFilter,
-  MonsterStatInput as CoreMonsterStatInput,
-  StatModifierSpec as CoreStatModifierSpec,
-} from "./effects/continuous";
-export type {
-  ActiveLingeringEffect as CoreActiveLingeringEffect,
-  LingeringEffectDefinition as CoreLingeringEffectDefinition,
-} from "./effects/lingering";
-export type {
-  DestructionReason as CoreDestructionReason,
-  DestructionReplacementAction as CoreDestructionReplacementAction,
-  DestructionReplacementInput as CoreDestructionReplacementInput,
-  DestructionReplacementResult as CoreDestructionReplacementResult,
-  DestructionReplacementSpec as CoreDestructionReplacementSpec,
-  ReplacementEffectDefinition as CoreReplacementEffectDefinition,
-} from "./effects/replacement";
 export type {
   DamageStepEffectKind as CoreDamageStepEffectKind,
   DamageStepEffectPermission as CoreDamageStepEffectPermission,
   DamageStepState as CoreDamageStepState,
   DamageStepSubstep as CoreDamageStepSubstep,
 } from "./rules/damageStep";
-export type {
-  PriorityState as CorePriorityState,
-  PriorityWindowReason as CorePriorityWindowReason,
-  PriorityWindowStatus as CorePriorityWindowStatus,
-} from "./rules/priority";
 export type { EngineCommand as CoreEngineCommand } from "./commands";
 export type { EngineError as CoreEngineError, EngineErrorCode as CoreEngineErrorCode } from "./errors";
 export type {

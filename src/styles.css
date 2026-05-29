@@ -565,7 +565,7 @@ button:focus-visible {
 .hand-actions {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 7px;
   min-width: 0;
 }
@@ -604,23 +604,29 @@ button:focus-visible {
   display: flex;
   justify-content: center;
   align-items: end;
-  gap: clamp(7px, 0.75vw, 12px);
   flex: 1;
   min-height: 0;
   overflow: visible;
 }
 
 .hand-card {
+  flex: 0 0 auto;
   width: var(--hand-card-width);
   transform: rotate(var(--fan-rotate)) translateY(var(--fan-lift));
   transition:
     transform 170ms ease,
+    margin-left 170ms ease,
     z-index 170ms ease;
 }
 
 .hand-card:hover {
-  z-index: 5;
+  z-index: 6;
   transform: translateY(-16px) scale(1.12) rotate(0deg);
+}
+
+.discard-mode .hand-card:hover {
+  z-index: 6;
+  transform: translateY(-10px) scale(1.06) rotate(0deg);
 }
 
 .hand-card.drawn {
@@ -641,6 +647,108 @@ button:focus-visible {
   inset: 0;
   pointer-events: none;
   background: rgba(213, 74, 88, 0.1);
+}
+
+.discard-mode .hand-card {
+  filter: grayscale(0.35) brightness(0.86);
+}
+
+.discard-mode .hand-card:hover,
+.discard-mode .hand-card.discarding {
+  filter: none;
+}
+
+.hand-card.discarding .card-view {
+  border-color: rgba(213, 74, 88, 0.9);
+  box-shadow:
+    0 0 0 2px rgba(213, 74, 88, 0.5),
+    0 0 18px rgba(213, 74, 88, 0.45),
+    0 6px 14px rgba(0, 0, 0, 0.34);
+}
+
+.hand-card.discarding .card-view::after {
+  content: "Discard";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffe1e4;
+  background: rgba(140, 30, 40, 0.42);
+}
+
+.hand-discard-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+  padding: 6px 10px;
+  border: 1px solid rgba(213, 74, 88, 0.55);
+  border-radius: 6px;
+  background: rgba(48, 30, 33, 0.94);
+  color: #f6eef0;
+}
+
+.hand-discard-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.hand-discard-count {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(213, 74, 88, 0.28);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.hand-discard-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.hand-discard-cancel,
+.hand-discard-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(231, 223, 205, 0.2);
+  background: var(--panel-soft);
+  color: #eef2f5;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease;
+}
+
+.hand-discard-confirm {
+  border-color: rgba(213, 74, 88, 0.62);
+  background: rgba(213, 74, 88, 0.26);
+  color: #ffe8ea;
+}
+
+.hand-discard-cancel:hover,
+.hand-discard-confirm:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.hand-discard-confirm:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .card-view {
@@ -1334,7 +1442,7 @@ button:focus-visible {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 10px;
-  width: min(980px, 96vw);
+  width: min(1100px, 96vw);
   height: min(720px, 88vh);
   min-height: 0;
   padding: 12px;
@@ -1412,9 +1520,28 @@ button:focus-visible {
 
 .override-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+  grid-template-columns: minmax(210px, 0.82fr) minmax(0, 1.05fr) minmax(284px, 0.9fr);
   gap: 10px;
   min-height: 0;
+}
+
+.override-preview {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px;
+  border: 1px solid rgba(231, 223, 205, 0.14);
+  border-radius: 8px;
+  background: rgba(17, 20, 24, 0.35);
+}
+
+.override-preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: min(62vh, 540px);
+  border-radius: 6px;
+  object-fit: contain;
 }
 
 .override-card-list {
@@ -1428,12 +1555,11 @@ button:focus-visible {
 
 .override-card-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) minmax(76px, auto);
+  grid-template-columns: 34px minmax(0, 1fr) minmax(76px, auto);
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 50px;
-  padding: 6px 8px;
+  padding: 7px 8px;
   border: 1px solid rgba(231, 223, 205, 0.13);
   border-radius: 6px;
   background: rgba(48, 55, 60, 0.7);
@@ -1524,9 +1650,20 @@ button:focus-visible {
   min-width: 0;
 }
 
+.override-current {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.override-current strong {
+  color: #f0e6cf;
+}
+
 .override-destination-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 6px;
 }
 
@@ -1543,14 +1680,29 @@ button:focus-visible {
   cursor: pointer;
 }
 
-.override-destination-btn:hover,
+.override-destination-btn:hover:not(:disabled),
 .override-zone-btn:hover:not(:disabled),
 .override-segmented button:hover {
   border-color: rgba(185, 150, 82, 0.62);
   background: #3a3f42;
 }
 
-.override-zone-section {
+.override-destination-btn.active,
+.override-zone-btn.selected {
+  border-color: rgba(185, 150, 82, 0.85);
+  background: rgba(185, 150, 82, 0.26);
+  color: #ffe8af;
+}
+
+.override-destination-btn:disabled {
+  cursor: not-allowed;
+  border-color: rgba(231, 223, 205, 0.1);
+  background: rgba(56, 63, 68, 0.42);
+  color: var(--text-soft);
+  opacity: 0.5;
+}
+
+.override-suboptions {
   display: grid;
   gap: 8px;
 }
@@ -1569,7 +1721,8 @@ button:focus-visible {
 
 .override-segmented {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 5px;
 }
 
@@ -1588,6 +1741,43 @@ button:focus-visible {
 .override-zone-btn:disabled {
   cursor: not-allowed;
   opacity: 0.34;
+}
+
+.override-confirm-bar {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(231, 223, 205, 0.14);
+}
+
+.override-summary {
+  min-height: 1.1em;
+  color: #d8c79d;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.override-confirm-btn {
+  min-height: 40px;
+  border: 1px solid rgba(185, 150, 82, 0.6);
+  border-radius: 6px;
+  background: var(--gold);
+  color: #1c160a;
+  font-size: 0.8rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.override-confirm-btn:hover:not(:disabled) {
+  background: #c89e57;
+}
+
+.override-confirm-btn:disabled {
+  cursor: not-allowed;
+  border-color: rgba(231, 223, 205, 0.14);
+  background: rgba(56, 63, 68, 0.6);
+  color: var(--text-soft);
 }
 
 .override-empty {
@@ -1731,12 +1921,14 @@ button:focus-visible {
 
   .hand-fan {
     justify-content: start;
+    gap: 8px;
     overflow-x: auto;
     padding-top: 16px;
   }
 
   .hand-card {
     min-width: 76px;
+    margin-left: 0 !important;
     transform: none;
   }
 
@@ -1764,10 +1956,15 @@ button:focus-visible {
 
   .override-body {
     grid-template-columns: 1fr;
+    overflow: auto;
   }
 
   .override-card-list {
     max-height: 42vh;
+  }
+
+  .override-preview-img {
+    max-height: 34vh;
   }
 
   .override-card-row {

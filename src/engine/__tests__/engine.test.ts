@@ -19,7 +19,6 @@ import {
   buildGoatTestDeck,
   createDuel as createEngineDuel,
   getLegalActions,
-  isPlayableCard,
   GOAT_TEST_DECKS,
   KAIBA_PLAYABLE_DECK_FIXTURE,
   KAIBA_GOAT_TEST_DECK,
@@ -107,7 +106,6 @@ describe("GOAT test deck presets", () => {
     expect(kaiba.deck.extra).toBeUndefined();
     expect(validateDeck(yugi.deck, cards).valid).toBe(true);
     expect(validateDeck(kaiba.deck, cards).valid).toBe(true);
-    expect(yugi.warnings.join(" ")).toContain("using supported vanilla filler");
     expect(kaiba.warnings.join(" ")).toContain("Vorse Raider");
     expect(validateGoatTestDeckDefinitions(cards).every((warning) => !warning.includes("exceeds"))).toBe(true);
   });
@@ -275,53 +273,6 @@ describe("duel core rules", () => {
     expect(result.events.at(-1)?.type).toBe("illegal-action");
     expect(result.state.players.P1.hand.some((instance) => instance.instanceId === ritual.instanceId)).toBe(true);
     expect(result.state.players.P1.monsterZones[0]).toBeNull();
-  });
-
-  it("summons, sets, and activates cards through the core reducer facade", () => {
-    let state = createDuel({
-      cards,
-      decks: { P1: deckWith(["Battle Ox", "Pot of Greed", "Messenger of Peace"]), P2: deckWith([]) },
-      firstPlayer: "P1",
-    });
-    state = applyAction(state, { type: "set-phase", playerId: "P1", phase: "M1" }).state;
-
-    const battleOx = state.players.P1.hand.find((instance) => instance.card.name === "Battle Ox")!;
-    state = applyAction(state, {
-      type: "play-card",
-      playerId: "P1",
-      instanceId: battleOx.instanceId,
-      intent: "summon",
-      zoneKind: "monster",
-      zoneIndex: 0,
-    }).state;
-
-    const pot = state.players.P1.hand.find((instance) => instance.card.name === "Pot of Greed")!;
-    state = applyAction(state, {
-      type: "play-card",
-      playerId: "P1",
-      instanceId: pot.instanceId,
-      intent: "activate",
-      zoneKind: "spellTrap",
-      zoneIndex: 0,
-    }).state;
-    state = applyAction(state, { type: "resolve-chain", playerId: "P1" }).state;
-
-    const continuousSpell = state.players.P1.hand.find((instance) => instance.card.name === "Messenger of Peace")!;
-    state = applyAction(state, {
-      type: "play-card",
-      playerId: "P1",
-      instanceId: continuousSpell.instanceId,
-      intent: "activate",
-      zoneKind: "spellTrap",
-      zoneIndex: 1,
-    }).state;
-
-    expect(state.players.P1.monsterZones[0]?.instance.card.name).toBe("Battle Ox");
-    expect(state.players.P1.graveyard[0].instance.card.name).toBe("Pot of Greed");
-    expect(state.players.P1.hand).toHaveLength(6);
-    expect(state.players.P1.deck).toHaveLength(32);
-    expect(state.players.P1.spellTrapZones[1]).toBeNull();
-    expect(state.events.map((event) => event.type)).toContain("effect-not-implemented");
   });
 
   it("requires exact Tributes for Level 7+ Tribute Summons and prefers empty target zones", () => {
@@ -917,7 +868,7 @@ function deckWith(priorityNames: string[]): DeckList {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        isPlayableCard(card.passcode, cards) &&
+        card.legality.goat_world_pool === true &&
         !excluded.has(card.passcode),
     )
     .slice(0, 40 - priorityPasscodes.length)

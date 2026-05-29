@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import type { CardRecord } from "../../types";
-import { isPlayableCard } from "../cards/coverage";
 import type { ZoneCard } from "../core/cardRefs";
 import type { DuelState } from "../core/state";
 import { createDuel, reduceDuel } from "../reducer";
@@ -314,7 +313,7 @@ function legalMainDeck(size: number): string[] {
       (card) =>
         card.legality.goat_world_pool &&
         card.legality.max_copies > 0 &&
-        isPlayableCard(card.passcode, cards),
+        card.legality.goat_world_pool === true,
     )
     .map((card) => card.passcode);
 

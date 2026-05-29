@@ -6,8 +6,6 @@ import {
   assignRandomPlayableDecksToDuel,
   clonePlayableDeck,
   createCoreDuel,
-  getCardCoverage,
-  isInitialSupportedCard,
   KAIBA_PLAYABLE_DECK_FIXTURE,
   PLAYABLE_DECK_FIXTURES,
   validateDeck,
@@ -33,7 +31,6 @@ describe("supported playable deck fixtures", () => {
       expect(deck.side).toBeUndefined();
       expect(deck.extra).toBeUndefined();
       expect(validateDeck(deck, cards)).toEqual({ valid: true, errors: [] });
-      assertSupportedCardIds(deck);
       assertCopyLimits(deck);
     }
   });
@@ -97,16 +94,6 @@ describe("supported playable deck fixtures", () => {
     expect(sorted(opponentMain)).toEqual(sorted(KAIBA_PLAYABLE_DECK_FIXTURE.deck.main));
   });
 });
-
-function assertSupportedCardIds(deck: DeckList): void {
-  for (const cardId of deck.main) {
-    const card = cardById(cardId);
-    const coverage = getCardCoverage(card);
-
-    expect(isInitialSupportedCard(card)).toBe(true);
-    expect(["goatVanilla", "goatTemplate", "goatCustom"]).toContain(coverage.status);
-  }
-}
 
 function assertCopyLimits(deck: DeckList): void {
   const counts = new Map<string, number>();

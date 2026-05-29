@@ -1,23 +1,10 @@
 import type { DuelState } from "../core/state";
-import { expireLingeringEffectsForEndPhase } from "../effects/lingering";
-import { isSourceOnField } from "../effects/continuous";
 
+/**
+ * Manual-play mode has no lingering/continuous effects, so there is no state-based
+ * cleanup to perform. Kept as an identity function so existing battle call sites are
+ * unaffected.
+ */
 export function applyStateBasedCleanup(state: DuelState): DuelState {
-  return expireLingeringEffectsForEndPhase(removeDetachedLingeringEffects(state));
-}
-
-function removeDetachedLingeringEffects(state: DuelState): DuelState {
-  const existing = state.lingeringEffects ?? [];
-  const lingeringEffects = existing.filter(
-    (effect) => !effect.definition.removeWhenSourceLeavesField || isSourceOnField(state, effect.sourceInstanceId),
-  );
-
-  if (lingeringEffects.length === existing.length) {
-    return state;
-  }
-
-  return {
-    ...state,
-    lingeringEffects,
-  };
+  return state;
 }
