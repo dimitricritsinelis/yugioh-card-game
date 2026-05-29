@@ -2,7 +2,7 @@ alter table public.duel_games
   add column if not exists realtime_topic text;
 
 update public.duel_games
-  set realtime_topic = encode(gen_random_bytes(16), 'hex')
+  set realtime_topic = replace(gen_random_uuid()::text, '-', '')
   where realtime_topic is null;
 
 alter table public.duel_games
