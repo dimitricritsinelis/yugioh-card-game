@@ -231,7 +231,7 @@ describe("online UI smoke", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("P1 Set a card.")).toBeTruthy();
+      expect(screen.getByText("Set a card.")).toBeTruthy();
     }, { timeout: 7_000 });
   }, 10_000);
 });

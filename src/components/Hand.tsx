@@ -8,6 +8,8 @@ interface HandProps {
   selectedCardId: string | null;
   lastDrawnCardId: string | null;
   unavailableCardIds: string[];
+  handCount: number;
+  handLimit: number;
   onSelectCard: (cardId: string) => void;
   onOpenOverride?: () => void;
   discardMode?: boolean;
@@ -23,6 +25,8 @@ export function Hand({
   selectedCardId,
   lastDrawnCardId,
   unavailableCardIds,
+  handCount,
+  handLimit,
   onSelectCard,
   onOpenOverride,
   discardMode = false,
@@ -140,6 +144,16 @@ export function Hand({
           })}
         </div>
       </div>
+
+      {discardMode ? null : (
+        <div className="hand-count-badge" aria-label="Hand size">
+          <span className="eyebrow">Hand</span>
+          <strong className={handCount > handLimit ? "over-limit" : ""}>
+            {handCount}
+            <span className="hand-status-limit">/ {handLimit}</span>
+          </strong>
+        </div>
+      )}
     </section>
   );
 }

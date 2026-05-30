@@ -355,7 +355,7 @@ export function getTurnFlowActionLabel(state: GameState): string {
   }
 
   if (state.phase === "BP") {
-    return "End Battle";
+    return "Main Phase 2";
   }
 
   if (state.phase === "M2" || state.phase === "EP") {

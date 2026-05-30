@@ -852,7 +852,7 @@ describe("frontend adapter", () => {
 
     const battle = continueTurnFlow(gameWithAttacker);
     expect(battle.phase).toBe("BP");
-    expect(getTurnFlowActionLabel(battle)).toBe("End Battle");
+    expect(getTurnFlowActionLabel(battle)).toBe("Main Phase 2");
 
     const main2 = continueTurnFlow(battle);
     expect(main2.phase).toBe("M2");

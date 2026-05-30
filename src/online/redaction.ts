@@ -12,6 +12,58 @@ const HIDDEN_ID_KEYS = new Set([
   "defenderCardId",
 ]);
 
+// Event types that are pure phase/flow bookkeeping or redundant with the
+// outcome events that follow them — kept out of the player-facing log so it
+// reads as a short list of meaningful actions.
+const LOG_NOISE_EVENT_TYPES = new Set([
+  "phase-changed",
+  "standby-passed",
+  "battle-completed",
+  "summon-declared",
+  "passive-board-filler-empty",
+  "illegal-action",
+  "card-activation-empty",
+  "effect-not-implemented",
+]);
+
+export interface FormattedLogEntry {
+  readonly actor: PlayerId | null;
+  readonly text: string;
+}
+
+/**
+ * Turns a raw duel event into a compact, color-codeable log line, or `null`
+ * if the event is bookkeeping noise that should be dropped from the log.
+ * The actor is surfaced separately so the UI can render a P1/P2 chip instead
+ * of repeating it in prose.
+ */
+export function formatActionLogEntry(
+  event: DuelEvent,
+  viewerId: PlayerId | null,
+): FormattedLogEntry | null {
+  if (LOG_NOISE_EVENT_TYPES.has(event.type) || event.type.endsWith("-empty")) {
+    return null;
+  }
+
+  const message = redactActionLogMessage(event, viewerId);
+  const actor = actorFromEvent(event);
+  const text = actor ? stripLeadingActor(message, actor) : message;
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  return { actor, text };
+}
+
+function stripLeadingActor(message: string, actor: PlayerId): string {
+  if (message.startsWith(`${actor} `)) {
+    const rest = message.slice(actor.length + 1);
+    return rest.charAt(0).toUpperCase() + rest.slice(1);
+  }
+  return message;
+}
+
 export function redactActionLogMessage(event: DuelEvent, viewerId: PlayerId | null): string {
   const actor = actorFromEvent(event);
 

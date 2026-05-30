@@ -200,7 +200,9 @@ describe("online move ordering", () => {
     expect(after.legal.canAdvance).toBe(false);
     expect(after.version).toBe(before.version + 1);
     expect(after.spectator?.P1.handCount).toBe((before.spectator?.P1.handCount ?? 0) - 1);
-    expect(after.actionLog.some((entry) => entry.message === "P1 Set a card.")).toBe(true);
+    expect(
+      after.actionLog.some((entry) => entry.actor === "P1" && entry.message === "Set a card."),
+    ).toBe(true);
   });
 });
 
@@ -297,8 +299,12 @@ describe("online hidden information", () => {
     expect(spectatorJson).not.toContain(setCard.instanceId);
     expect(spectatorJson).not.toContain(setCard.card.passcode);
     expect(spectatorJson).not.toContain(setCard.card.name);
-    expect(p2View.actionLog.some((entry) => entry.message === "P1 Set a card.")).toBe(true);
-    expect(spectatorView.actionLog.some((entry) => entry.message === "P1 Set a card.")).toBe(true);
+    expect(
+      p2View.actionLog.some((entry) => entry.actor === "P1" && entry.message === "Set a card."),
+    ).toBe(true);
+    expect(
+      spectatorView.actionLog.some((entry) => entry.actor === "P1" && entry.message === "Set a card."),
+    ).toBe(true);
 
     const move = store.getMoveForTest(gameId, p1View.version + 1)!;
     const realtimePayload = toPublicMovePayload({

@@ -91,6 +91,7 @@ export interface OpponentState {
 export interface ActionLogEntry {
   id: string;
   message: string;
+  actor?: import("./engine").PlayerId | null;
 }
 
 export interface GameState {
