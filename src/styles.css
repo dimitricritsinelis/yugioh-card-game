@@ -681,6 +681,33 @@ button:focus-visible {
   background: rgba(140, 30, 40, 0.42);
 }
 
+/* Compact hand-size readout pinned to the bottom-right gap of the hand dock,
+   sitting just left of the player's LP. Lifts above the fan so a wide hand
+   can't paint over it. */
+.hand-count-badge {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  pointer-events: none;
+  text-align: right;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.hand-count-badge strong {
+  font-size: 1.18rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.hand-count-badge strong.over-limit {
+  color: #e98a93;
+}
+
 /* Hand status / discard controls live in the right rail (see HandStatusCard).
    Kept out of the hand row so the tall card fan can never cover them. */
 .hand-status {
@@ -1467,10 +1494,37 @@ button:focus-visible {
 }
 
 .log-panel li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   color: var(--text-soft);
   font-size: 0.66rem;
   font-weight: 750;
   line-height: 1.25;
+}
+
+.log-panel .log-text {
+  min-width: 0;
+}
+
+.log-actor {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.log-actor-p1 {
+  color: #dd8aa0;
+  background: rgba(221, 138, 160, 0.15);
+}
+
+.log-actor-p2 {
+  color: #88b6de;
+  background: rgba(136, 182, 222, 0.15);
 }
 
 .override-backdrop {

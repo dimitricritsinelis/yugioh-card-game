@@ -11,7 +11,7 @@ import {
   selectUnavailableHandCardIds,
 } from "../engine/adapters/viewSelectors";
 import type { ActionLogEntry, CardInstance, OpponentState, PlayerState, ZoneCard } from "../types";
-import { redactActionLogMessage } from "./redaction";
+import { formatActionLogEntry } from "./redaction";
 import type {
   OnlineBoardZone,
   OnlineGameStatus,
@@ -41,7 +41,7 @@ export function buildOnlineGameView(input: {
 }): OnlineGameView {
   const viewerId = input.viewerRole === "P1" || input.viewerRole === "P2" ? input.viewerRole : undefined;
   const seats = publicSeats(input.seats);
-  const actionLog = selectRedactedActionLog(input.engine.events, viewerId ?? null, input.eventLimit ?? 10);
+  const actionLog = selectRedactedActionLog(input.engine.events, viewerId ?? null, input.eventLimit ?? 6);
   const legal = viewerId ? selectOnlineLegalState(input.engine, viewerId) : emptyLegalState("Spectating");
 
   const base = {
@@ -215,13 +215,16 @@ function selectRedactedActionLog(
   viewerId: PlayerId | null,
   limit: number,
 ): ActionLogEntry[] {
-  return events
-    .slice(-limit)
-    .reverse()
-    .map((event) => ({
-      id: event.id,
-      message: redactActionLogMessage(event, viewerId),
-    }));
+  const entries: ActionLogEntry[] = [];
+  for (const event of events) {
+    const formatted = formatActionLogEntry(event, viewerId);
+    if (formatted) {
+      entries.push({ id: event.id, message: formatted.text, actor: formatted.actor });
+    }
+  }
+
+  // Keep the most recent meaningful entries, newest first.
+  return entries.slice(-limit).reverse();
 }
 
 function getAdvanceLabel(engine: DuelState, viewerId: PlayerId): string {
@@ -234,7 +237,7 @@ function getAdvanceLabel(engine: DuelState, viewerId: PlayerId): string {
   }
 
   if (engine.phase === "BP") {
-    return "End Battle";
+    return "Main Phase 2";
   }
 
   if (engine.phase === "M2" || engine.phase === "EP") {

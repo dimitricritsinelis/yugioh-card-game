@@ -457,6 +457,8 @@ export default function App() {
               selectedCardId={renderedGame.selectedCardId}
               lastDrawnCardId={renderedGame.lastDrawnCardId}
               unavailableCardIds={unavailableHandCardIds}
+              handCount={renderedGame.player.hand.length}
+              handLimit={HAND_SIZE_LIMIT}
               onSelectCard={selectCard}
               discardMode={discard !== null}
               discardSelectedIds={discard?.selectedIds ?? []}
@@ -475,7 +477,7 @@ export default function App() {
               disabled={!canAdvance || discard !== null}
               disabledLabel={advanceLabel}
             />
-            {isSpectator ? null : (
+            {!isSpectator && discard !== null ? (
               <HandStatusCard
                 handCount={renderedGame.player.hand.length}
                 handLimit={HAND_SIZE_LIMIT}
@@ -483,7 +485,7 @@ export default function App() {
                 onConfirmDiscard={confirmDiscard}
                 onCancelDiscard={cancelDiscard}
               />
-            )}
+            ) : null}
             <PlayerStatusCard name={viewerName} lp={renderedGame.player.lp} accent="player" readonly />
           </div>
 
