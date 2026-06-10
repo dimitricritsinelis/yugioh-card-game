@@ -1,5 +1,9 @@
 # GOAT Engine Task Queue
 
+> Historical note: this task queue documents an earlier engine/card-script roadmap.
+> It references files and tests that are not present in the current online-only
+> implementation. Treat it as archival context, not the active implementation plan.
+
 ## Short goal
 
 Build a deterministic backend/game engine for the existing Yu-Gi-Oh! frontend so two players can play with **exactly 40-card Main Decks**, **no Side Deck**, and **no Extra/Fusion Deck**. The engine must support legal actions, phases, card effects for implemented cards, explicit unsupported-card handling, and frontend integration through an adapter rather than a rewrite.

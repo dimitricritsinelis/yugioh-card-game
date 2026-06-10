@@ -1,7 +1,6 @@
 import type {
   ActionLogEntry,
   CardAction,
-  CardInstance,
   OpponentState,
   Phase,
   PlayerState,

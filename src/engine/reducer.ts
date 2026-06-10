@@ -1,14 +1,12 @@
 import type { CardRecord } from "../types";
 import type { EngineCommand } from "./commands";
-import type { AttachmentLeaveBehavior, CardInstance, ZoneCard, ZoneRef } from "./core/cardRefs";
+import type { CardInstance, ZoneCard, ZoneRef } from "./core/cardRefs";
 import { cloneDuelState } from "./core/clone";
 import type { DuelState, PendingAttackState, PlayerState } from "./core/state";
 import {
   findCardByInstanceId,
   insertIntoZone,
   removeFromZone,
-  setCardFace,
-  updateMonsterPosition,
   type ZoneCardOptions,
 } from "./core/zones";
 import type { CardDefinition } from "./data/cardCatalog";
@@ -21,7 +19,6 @@ import type {
   AttackDeclaredEvent,
   BattleCompletedEvent,
   BattleDamageEvent,
-  CardBanishedEvent,
   CardDestroyedEvent,
   DuelFinishedEvent,
   DuelStartedEvent,
@@ -48,7 +45,7 @@ import {
 } from "./rules/battle";
 import { closeDamageStep } from "./rules/damageStep";
 import { discardHandToLimit, type HandSizeDiscard } from "./rules/endPhase";
-import { getNextPhase, isNextPhase, phaseLabel } from "./rules/phases";
+import { isNextPhase, phaseLabel } from "./rules/phases";
 import { validateManualPositionChange } from "./rules/positionChange";
 import { applyStateBasedCleanup } from "./rules/stateBasedCleanup";
 import {
@@ -192,6 +189,10 @@ function changePhase(state: DuelState, command: Extract<EngineCommand, { type: "
     );
   }
 
+  if (command.phase === "BP" && state.turn <= 1) {
+    return illegalResult(state, command, "Battle Phase cannot be entered on the first turn.", command.playerId);
+  }
+
   let nextState = cloneDuelState(state);
   const events: EngineEvent[] = [];
 
@@ -233,7 +234,7 @@ function endTurn(state: DuelState, command: Extract<EngineCommand, { type: "end-
     return preflight;
   }
 
-  if (state.phase !== "EP") {
+  if (state.phase !== "EP" && !(state.turn <= 1 && state.phase === "M1")) {
     return illegalResult(state, command, "Turns can only be ended from the End Phase.", command.playerId);
   }
 
@@ -1069,10 +1070,6 @@ function isValidOverrideIndex(index: number, length: number): boolean {
   return Number.isInteger(index) && index >= 0 && index < length;
 }
 
-function playerForSelector(playerId: PlayerId, selector: "self" | "opponent"): PlayerId {
-  return selector === "self" ? playerId : opponentOf(playerId);
-}
-
 function isDuelFinished(state: DuelState): boolean {
   return state.winner !== null || PLAYERS.some((playerId) => state.players[playerId].lost);
 }
@@ -1578,25 +1575,6 @@ function createLpChangedEvent(
   };
 }
 
-function createCardBanishedEvent(
-  builder: EventBuilder,
-  playerId: PlayerId,
-  card: ZoneCard,
-  turn: number,
-  reason: CardBanishedEvent["reason"] = "effect",
-): CardBanishedEvent {
-  return {
-    id: builder.nextId(),
-    type: "card-banished",
-    message: `${playerId}'s card was banished by ${reason}.`,
-    playerId,
-    instanceId: card.instanceId,
-    cardId: card.cardId,
-    reason,
-    turn,
-  };
-}
-
 function createCardDestroyedEvent(
   builder: EventBuilder,
   playerId: PlayerId,
@@ -1980,29 +1958,6 @@ function applyAutomaticWinConditions(
   return { state, events: [] };
 }
 
-function applyAutomaticWinConditionsUnrecorded(
-  state: DuelState,
-  builder: EventBuilder,
-): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
-  if (isDuelFinished(state)) {
-    return { state, events: [] };
-  }
-
-  const lpZeroLoser = playerWithZeroLp(state);
-
-  if (lpZeroLoser) {
-    return finishDuelUnrecorded(state, lpZeroLoser, "lp-zero", builder);
-  }
-
-  const exodiaWinner = findExodiaWinner(state);
-
-  if (exodiaWinner) {
-    return finishDuelUnrecorded(state, opponentOf(exodiaWinner), "exodia", builder);
-  }
-
-  return { state, events: [] };
-}
-
 function finishDuel(
   state: DuelState,
   loser: PlayerId,
@@ -2029,64 +1984,6 @@ function finishDuel(
 
   return {
     state: finishedState,
-    events: [playerLost, duelFinished],
-  };
-}
-
-function finishDuelAsDraw(
-  state: DuelState,
-  builder: EventBuilder,
-): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
-  const playerLostEvents = PLAYERS.map((playerId) => createPlayerLostEvent(builder, playerId, "lp-zero", state.turn));
-  const duelFinished = createDuelFinishedEvent(builder, null, "draw", state.turn);
-  const events = [...playerLostEvents, duelFinished];
-  const finishedState = appendEventIds(
-    {
-      ...state,
-      winner: null,
-      players: {
-        ...state.players,
-        P1: {
-          ...state.players.P1,
-          lost: true,
-        },
-        P2: {
-          ...state.players.P2,
-          lost: true,
-        },
-      },
-    },
-    events,
-  );
-
-  return {
-    state: finishedState,
-    events,
-  };
-}
-
-function finishDuelUnrecorded(
-  state: DuelState,
-  loser: PlayerId,
-  reason: LossReason,
-  builder: EventBuilder,
-): { readonly state: DuelState; readonly events: readonly EngineEvent[] } {
-  const winner = opponentOf(loser);
-  const playerLost = createPlayerLostEvent(builder, loser, reason, state.turn);
-  const duelFinished = createDuelFinishedEvent(builder, winner, reason, state.turn);
-
-  return {
-    state: {
-      ...state,
-      winner,
-      players: {
-        ...state.players,
-        [loser]: {
-          ...state.players[loser],
-          lost: true,
-        },
-      },
-    },
     events: [playerLost, duelFinished],
   };
 }
