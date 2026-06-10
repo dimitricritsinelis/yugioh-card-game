@@ -6,6 +6,8 @@ import {
   createDuel,
   createSeededRng,
   getLegalActions,
+  packEngineStateForStorage,
+  unpackEngineStateFromStorage,
   type DuelAction,
   type DuelEvent,
   type DuelState,
@@ -823,7 +825,7 @@ export class SupabaseGameStore implements OnlineGameStore {
       p_expected_version: input.expectedVersion,
       p_actor_role: input.actorRole,
       p_private_action: input.privateAction,
-      p_next_engine_state: input.nextEngineState,
+      p_next_engine_state: packEngineStateForStorage(input.nextEngineState),
       p_next_status: input.nextStatus,
       p_next_active_player: input.nextEngineState.activePlayer,
       p_next_phase: input.nextEngineState.phase,
@@ -1080,7 +1082,7 @@ function toDbGameInsert(record: Omit<GameRecord, "createdAt" | "updatedAt" | "la
     phase: record.phase,
     turn: record.turn,
     winner: record.winner,
-    engine_state: record.engineState,
+    engine_state: packEngineStateForStorage(record.engineState),
   };
 }
 
@@ -1096,7 +1098,7 @@ function fromDbGame(row: Record<string, unknown>): GameRecord {
     phase: row.phase as GameRecord["phase"],
     turn: typeof row.turn === "number" ? row.turn : row.turn == null ? null : Number(row.turn),
     winner: row.winner as PlayerId | null,
-    engineState: row.engine_state as DuelState,
+    engineState: unpackEngineStateFromStorage(row.engine_state, loadServerCardBundle()),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     lastMoveAt: row.last_move_at ? String(row.last_move_at) : null,

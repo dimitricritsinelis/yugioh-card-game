@@ -228,7 +228,7 @@ describe("core battle flow", () => {
     });
     const alreadyAttackedState = stateWithBattlefield({
       attackerName: "Battle Ox",
-      attackerOverrides: { attackedTurn: 1 },
+      attackerOverrides: { attackedTurn: 2 },
     });
     const mainPhaseAttacker = mainPhaseState.players.P1.monsterZones[0]!;
     const alreadyAttacked = alreadyAttackedState.players.P1.monsterZones[0]!;
@@ -288,7 +288,9 @@ function stateWithBattlefield(options: {
 }
 
 function advanceToBattlePhase(state: DuelState): DuelState {
-  let current = reduceDuel(state, { type: "change-phase", playerId: "P1", phase: "SP" }).state;
+  // GOAT rules: the Battle Phase cannot be entered on turn 1, so rigged battle
+  // fixtures start from turn 2.
+  let current = reduceDuel({ ...state, turn: 2 }, { type: "change-phase", playerId: "P1", phase: "SP" }).state;
 
   for (const phase of ["M1", "BP"] as const) {
     current = reduceDuel(current, { type: "change-phase", playerId: "P1", phase }).state;

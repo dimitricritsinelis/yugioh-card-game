@@ -28,7 +28,13 @@ export {
 export { buildCardCatalog, getCardDefinition, requireCardDefinition } from "./data/cardCatalog";
 export { normalizeCard, normalizeCardCatalog } from "./data/normalizeCard";
 export { createDuel as createCoreDuel, reduceDuel } from "./reducer";
-export { deserializeDuelState, serializeDuelState } from "./serialization";
+export {
+  deserializeDuelState,
+  ENGINE_STATE_VERSION,
+  packEngineStateForStorage,
+  serializeDuelState,
+  unpackEngineStateFromStorage,
+} from "./serialization";
 export {
   closeDamageStep,
   createDamageStepState,
@@ -83,7 +89,7 @@ export {
   YUGI_GOAT_TEST_DECK,
 } from "./goatTestDecks";
 export type { CreateCoreDuelConfig, CreateDuelResult } from "./reducer";
-export type { SerializedCoreDuelState } from "./serialization";
+export type { PersistedEngineState, SerializedCoreDuelState } from "./serialization";
 export type {
   CreateDuelConfig,
   ChainLink,

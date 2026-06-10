@@ -252,6 +252,11 @@ function canEnterBattle(engine: DuelState, playerId: PlayerId): boolean {
     return false;
   }
 
+  // GOAT rules: the Battle Phase cannot be entered on turn 1.
+  if (engine.turn <= 1) {
+    return false;
+  }
+
   return engine.players[playerId].monsterZones.some(
     (zone) => zone && !zone.faceDown && zone.position === "attack" && !zone.instance.attackedThisTurn,
   );

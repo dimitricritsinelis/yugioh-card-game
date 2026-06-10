@@ -33,18 +33,34 @@ describe("core phase flow", () => {
     });
 
     state = result.state;
-    for (const phase of ["BP", "M2", "EP"] as const) {
-      result = reduceDuel(state, { type: "change-phase", playerId: "P1", phase });
+
+    // GOAT rules: the Battle Phase cannot be entered on turn 1.
+    const blockedBattle = reduceDuel(state, { type: "change-phase", playerId: "P1", phase: "BP" });
+    expect(blockedBattle.errors[0]).toMatchObject({
+      code: "illegal-action",
+      message: "Battle Phase cannot be entered on the first turn.",
+    });
+    expect(blockedBattle.state.phase).toBe("M1");
+
+    // Turn 1 therefore ends directly from Main Phase 1.
+    const ended = reduceDuel(state, { type: "end-turn", playerId: "P1" });
+    expect(ended.errors).toEqual([]);
+    expect(ended.state.turn).toBe(2);
+    expect(ended.state.phase).toBe("DP");
+
+    // From turn 2 onward every phase, including the Battle Phase, is reachable.
+    state = ended.state;
+    const turnPlayer = ended.state.activePlayer;
+    for (const phase of ["SP", "M1", "BP", "M2", "EP"] as const) {
+      result = reduceDuel(state, { type: "change-phase", playerId: turnPlayer, phase });
       expect(result.errors).toEqual([]);
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0]).toMatchObject({ type: "phase-changed", to: phase });
       expect(result.state.phase).toBe(phase);
       state = result.state;
     }
   });
 
   it("starts the next player's turn in Draw Phase and draws for that turn", () => {
-    let state = advanceToEndPhase(createFixtureDuel().state);
+    let state = advanceToTurnOneMainPhase(createFixtureDuel().state);
     const ended = reduceDuel(state, { type: "end-turn", playerId: "P1" });
 
     expect(ended.errors).toEqual([]);
@@ -63,7 +79,7 @@ describe("core phase flow", () => {
   });
 
   it("discards down to six cards at End Phase without mutating input state", () => {
-    const epState = advanceToEndPhase(createFixtureDuel().state);
+    const epState = advanceToTurnOneMainPhase(createFixtureDuel().state);
     const extraCards = epState.players.P1.mainDeck.slice(0, 2);
     const oversizedHandState: DuelState = {
       ...epState,
@@ -125,12 +141,12 @@ function createFixtureDuel() {
   });
 }
 
-function advanceToEndPhase(state: DuelState): DuelState {
+function advanceToTurnOneMainPhase(state: DuelState): DuelState {
+  // Turn 1 has no Battle Phase, so the furthest reachable phase is Main
+  // Phase 1; end-turn is legal from there on turn 1.
   let current = reduceDuel(state, { type: "change-phase", playerId: "P1", phase: "SP" }).state;
 
-  for (const phase of ["M1", "BP", "M2", "EP"] as const) {
-    current = reduceDuel(current, { type: "change-phase", playerId: "P1", phase }).state;
-  }
+  current = reduceDuel(current, { type: "change-phase", playerId: "P1", phase: "M1" }).state;
 
   return current;
 }

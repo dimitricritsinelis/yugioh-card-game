@@ -139,7 +139,9 @@ function createFixtureDuel(priorityNames: readonly string[] = []) {
 }
 
 function advanceToBattlePhase(state: DuelState): DuelState {
-  let current = reduceDuel(state, { type: "change-phase", playerId: "P1", phase: "SP" }).state;
+  // GOAT rules: the Battle Phase cannot be entered on turn 1, so rigged battle
+  // fixtures start from turn 2.
+  let current = reduceDuel({ ...state, turn: 2 }, { type: "change-phase", playerId: "P1", phase: "SP" }).state;
 
   for (const phase of ["M1", "BP"] as const) {
     current = reduceDuel(current, { type: "change-phase", playerId: "P1", phase }).state;
