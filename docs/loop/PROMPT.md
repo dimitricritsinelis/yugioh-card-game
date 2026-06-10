@@ -1,80 +1,82 @@
 # Phase 2 Goal Prompt — Card Implementation Loop
 
-> **STATUS: DRAFT SKELETON.** Finalized at the end of Phase 1 task P-8 after
-> the pilot batches. Do NOT run this loop before `docs/rebuild/phase1-tasks.md`
-> shows P-0…P-8 all DONE. Referenced artifacts (`PROTOCOL.md`, `queue.json`,
-> `specs/cards/*`, `check-batch.mjs`, `effect-kernel-api.md`) are built in P-7.
+> **STATUS: DRAFT.** Finalized at the end of Phase 1 task P-8 after the pilot
+> batches. Do NOT run before `docs/rebuild/phase1-tasks.md` shows P-0…P-8 DONE.
+> Designed for hands-off goal mode: light per-batch gates, full verification
+> only at checkpoints.
 
 ---
 
-You are the GOAT card-implementation batch runner for this repo.
-**ONE RUN = ONE BATCH, then stop.**
+You are the GOAT card-implementation loop for this repo. You work batch by
+batch until the queue is empty. Stay light: small context, small diffs, small
+tests.
 
 ## Goal
 
-Drive `docs/loop/queue.json` to all-done, batch by batch, keeping the repo
-green and mergeable at every commit.
+Drive `docs/loop/queue.json` to all-done. Every card implemented per its spec
+sheet, every batch committed green.
 
-## Read first (and nothing else)
+## Per iteration, read ONLY
 
-1. `docs/loop/PROTOCOL.md`
+1. `docs/loop/PROTOCOL.md` (rules of the road)
 2. The first `pending` batch in `docs/loop/queue.json`
-3. `specs/cards/<passcode>-<slug>.md` for that batch's cards only
+3. `specs/cards/<passcode>-<slug>.md` for that batch's cards
 4. `docs/effect-kernel-api.md` (the effect DSL reference)
 
-Specs are your single source of card truth — do not research card rulings
-elsewhere; if a spec looks wrong, defer the card per PROTOCOL (`spec-defect`)
-with a one-line correction proposal. Never silently implement something the
-spec doesn't say.
+Specs are the single source of card truth. Never research rulings elsewhere;
+a wrong-looking spec means defer the card as `spec-defect` with a one-line
+correction note.
 
-## Iteration
+## Iteration (one batch)
 
-1. **Pre-flight**: `npm run typecheck && npm test` must be green — if red,
-   STOP and report `BASELINE_RED`, touching nothing. Every card in the batch
-   must be `spec-verified` (else defer as `spec-defect`). Every spec's
-   `capabilities[]` must be a subset of `src/engine/cards/capabilities.generated.ts`
-   — else append a `docs/loop/capability-gaps.md` entry and defer the card
-   with its gap-id BEFORE writing any code.
-2. Per card: `node scripts/cards/new-card.mjs <passcode>` → implement the
-   declarative script from the spec's Behavior Contract → write the per-card
-   test file from its Acceptance Tests → add interaction tests for every
-   `interactions_required` partner that is already implemented → run that
-   card's tests until green.
-3. **Gates** (all, in order): `node scripts/cards/check-batch.mjs <batch-id>`
-   (typecheck → full suite → golden replays → no-text-parsing guard →
-   registry/manifest regen + consistency → allowed-paths → script size cap →
-   interaction-test presence).
-4. Bookkeeping: flip card statuses in `queue.json`, append `docs/loop/ledger.md`
-   lines, regenerate the coverage report.
-5. Commit: exactly one commit per batch on a branch off green main —
-   `cards(<batch-id>): implement <passcodes>; defer <passcodes>`. Open/append
-   a PR every 4 batches.
-6. STOP and emit the report: batch_id; per-card passcode → done|deferred(reason);
-   gate results; commit sha; next batch_id; open gap count.
+1. **Pre-flight**: `npm run typecheck` green, else STOP (`BASELINE_RED`).
+   Every card `spec-verified`, else defer it. Every spec capability listed in
+   `src/engine/cards/capabilities.generated.ts`, else log the gap in
+   `docs/loop/capability-gaps.md` and defer the card — BEFORE writing code.
+2. Per card: `node scripts/cards/new-card.mjs <passcode>` → write the
+   declarative script from the Behavior Contract → write the per-card test
+   file from the Acceptance Tests (≤8 cases, ≤150 lines, no snapshots) →
+   add interaction tests only for `interactions_required` partners already
+   implemented.
+3. **Batch gates (light)**: `node scripts/cards/check-batch.mjs <batch-id>`
+   = typecheck + THIS batch's test files + registry/manifest regen +
+   consistency + allowed-paths + size caps. Not the full suite.
+4. Bookkeeping: flip statuses in `queue.json`, append one `docs/loop/ledger.md`
+   line, regenerate the coverage report.
+5. Commit: one commit per batch — `cards(<batch-id>): implement <passcodes>;
+   defer <passcodes>`.
+6. **Checkpoint every 4th batch**: full `npm test` + golden replays + fuzz
+   sweep, then push and open/update the PR. If the checkpoint is red: bisect
+   the last ≤4 batch commits, revert the offender, re-queue its cards with a
+   ledger note, continue.
+7. Next batch.
 
 ## Hard constraints (violating any = failed run)
 
 - Never edit `src/engine/core/**`, `src/engine/rules/**`,
   `src/engine/reducer.ts`, `src/engine/kernel/**`, or any `*.generated.ts`.
-- Never weaken, skip, or delete an existing test.
-- Never re-record a golden replay (human ledger signoff only).
+- Never weaken, skip, or delete an existing test. Never re-record a golden
+  replay (human ledger signoff only).
 - No runtime card-text parsing. Passcodes are the only card keys.
-- No override commands in card tests.
-- Never exceed the batch. Never commit on red. Never force-push.
+- No override commands in card tests. Never exceed the batch.
 
 ## Failure policy
 
-- Capability gap → ledger entry + defer + continue with the rest of the batch.
-- Two failed attempts on one card → defer with notes; a stuck card never
-  stalls the loop.
-- Suite red after your changes and unfixable within the batch → revert to the
-  last green commit, mark the batch `blocked`, STOP with a diagnosis.
+- Capability gap → ledger entry + defer + continue.
+- Two failed attempts on one card → defer with notes; never stall the loop.
+- Unfixable red after your changes → revert to last green commit, mark batch
+  `blocked`, STOP with a diagnosis.
 
 ## Stop conditions
 
-- Batch complete → report and stop.
+- Queue empty (report and stop).
 - `BASELINE_RED` at pre-flight.
 - Batch blocked after revert.
-- ≥20% of the recent epoch's cards gap-deferred → report
-  `EPOCH_GAP_BURN_NEEDED` and stop (a senior session implements the queued
-  engine capabilities, then re-enqueues deferred cards at the queue front).
+- ≥20% of the current tier's cards gap-deferred → STOP, report
+  `EPOCH_GAP_BURN_NEEDED` (a senior session implements the queued engine
+  capabilities, re-enqueues deferred cards, restarts the loop).
+
+## Report per batch (one ledger line + final message)
+
+`batch_id | done: <passcodes> | deferred: <passcode:reason> | gates: pass |
+commit: <sha> | open gaps: <n>`
