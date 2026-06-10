@@ -38,8 +38,10 @@ Progress:
 - Real bug fixed: `src/online/publicView.ts` `canEnterBattle` offered the
   online "Battle Phase" advance on turn 1 and the engine then rejected it;
   it now matches `gameLogic.ts` with the turn-1 check.
-- Added `.github/workflows/ci.yml` (npm ci, typecheck, test, build on every
-  push to main and every PR).
+- Authored `.github/workflows/ci.yml` (npm ci, typecheck, test, build on
+  every push to main and every PR). NOT yet pushed: the local git/gh tokens
+  lack the `workflow` scope. One-time fix: `gh auth refresh -s workflow`,
+  then commit and push the workflow file.
 - Known flake (pre-existing, tracked separately): the online spectator
   fallback-polling UI test is timing-sensitive under full-suite load.
 - Validation: `npm run typecheck` PASS, `npm test` 139/139 PASS,
