@@ -1,12 +1,10 @@
-import type { CardRecord, Phase, ZoneKind } from "../types";
+import type { CardRecord, Phase } from "../types";
 import type { CardInstance as CoreCardInstance, ZoneCard as CoreZoneCard } from "./core/cardRefs";
 import type { DuelState as CoreDuelState } from "./core/state";
-import { validateDeck } from "./deckValidation";
 import { shuffleSeeded } from "./random";
 import { createDuel as createCoreDuel, reduceDuel } from "./reducer";
 import type { EngineCommand } from "./commands";
 import type { EngineEvent } from "./events";
-import type { EnginePrompt } from "./result";
 import type {
   CreateDuelConfig,
   DeckList,
@@ -14,7 +12,6 @@ import type {
   DuelCardInstance,
   DuelEvent,
   DuelPlayerState,
-  DuelPrompt,
   DuelResult,
   DuelState,
   DuelZoneCard,
@@ -403,451 +400,6 @@ function clampTargetMonsterCount(targetMonsterCount: number): number {
   return Math.max(0, Math.min(ZONE_COUNT, Math.floor(targetMonsterCount)));
 }
 
-function handleDraw(state: DuelState, playerId: PlayerId): void {
-  if (!requireActivePlayer(state, playerId)) {
-    return;
-  }
-
-  if (state.phase !== "DP") {
-    addEvent(state, "illegal-action", "Cards can only be drawn for turn during the Draw Phase.");
-    return;
-  }
-
-  if (state.turnFlags.drawnThisTurn) {
-    addEvent(state, "illegal-action", "The turn player has already drawn this turn.");
-    return;
-  }
-
-  drawCards(state, playerId, 1);
-
-  if (state.winner) {
-    return;
-  }
-
-  state.turnFlags.drawnThisTurn = true;
-}
-
-function handleAdvancePhase(state: DuelState, playerId: PlayerId): void {
-  if (!requireActivePlayer(state, playerId)) {
-    return;
-  }
-
-  if (state.phase === "DP" && !state.turnFlags.drawnThisTurn) {
-    drawCards(state, playerId, 1);
-
-    if (state.winner) {
-      return;
-    }
-
-    state.turnFlags.drawnThisTurn = true;
-  }
-
-  if (state.phase === "EP") {
-    handleEndTurn(state, playerId);
-    return;
-  }
-
-  const currentIndex = PHASES.indexOf(state.phase);
-  const nextPhase = PHASES[currentIndex + 1] ?? "EP";
-
-  if (state.phase === "SP") {
-    addEvent(state, "standby-passed", "No Standby Phase actions were available.");
-  }
-
-  state.phase = nextPhase;
-  state.battleSubstep = nextPhase === "BP" ? "start" : "none";
-
-  if (nextPhase === "BP") {
-    state.turnFlags.battlePhaseConducted = true;
-  }
-
-  addEvent(state, "phase-advanced", `Entered ${phaseLabel(nextPhase)}.`);
-}
-
-function handleSetPhase(state: DuelState, playerId: PlayerId, phase: Phase): void {
-  if (!requireActivePlayer(state, playerId)) {
-    return;
-  }
-
-  state.phase = phase;
-  state.battleSubstep = phase === "BP" ? "start" : "none";
-  addEvent(state, "phase-set", `Jumped to ${phaseLabel(phase)}.`);
-}
-
-function handleEndTurn(state: DuelState, playerId: PlayerId): void {
-  if (!requireActivePlayer(state, playerId)) {
-    return;
-  }
-
-  if (state.phase === "M1" && !hasAvailableAttackers(state, playerId)) {
-    addEvent(state, "battle-phase-skipped", "Battle Phase skipped because no attacks were available.");
-  }
-
-  discardDownToHandLimit(state, playerId);
-
-  const nextPlayer = state.mode === "solo" ? playerId : opponentOf(playerId);
-  state.activePlayer = nextPlayer;
-  state.phase = "DP";
-  state.turn += 1;
-  state.battleSubstep = "none";
-  state.turnFlags = {
-    drawnThisTurn: false,
-    battlePhaseConducted: false,
-  };
-
-  for (const player of Object.values(state.players)) {
-    player.normalSummonUsed = false;
-    player.monsterZones = player.monsterZones.map((zone) =>
-      zone
-        ? {
-            ...zone,
-            instance: {
-              ...zone.instance,
-              attackedThisTurn: false,
-            },
-          }
-        : null,
-    );
-  }
-
-  addEvent(state, "turn-ended", `Turn ${state.turn} begins.`);
-}
-
-function handlePlayCard(
-  state: DuelState,
-  action: Extract<DuelAction, { type: "play-card" }>,
-): void {
-  if (!requireActivePlayer(state, action.playerId)) {
-    return;
-  }
-
-  if (state.phase !== "M1" && state.phase !== "M2") {
-    addEvent(state, "illegal-action", "Cards can only be played from hand during Main Phase 1 or Main Phase 2.");
-    return;
-  }
-  const player = state.players[action.playerId];
-  const handIndex = player.hand.findIndex((card) => card.instanceId === action.instanceId);
-
-  if (handIndex < 0) {
-    addEvent(state, "illegal-action", "Selected card is not in that player's hand.");
-    return;
-  }
-
-  const instance = player.hand[handIndex];
-  const requiredZone: ZoneKind = instance.card.category === "Monster" ? "monster" : "spellTrap";
-
-  if (action.zoneKind !== requiredZone) {
-    addEvent(state, "illegal-action", `${instance.card.name} cannot be played to that zone type.`);
-    return;
-  }
-
-  if (action.zoneKind === "monster") {
-    playMonster(state, player, handIndex, action);
-    return;
-  }
-
-  playSpellTrap(state, player, handIndex, action);
-}
-
-function playMonster(
-  state: DuelState,
-  player: DuelPlayerState,
-  handIndex: number,
-  action: Extract<DuelAction, { type: "play-card" }>,
-): void {
-  const instance = player.hand[handIndex];
-
-  if (action.intent === "activate") {
-    addEvent(state, "illegal-action", "Monster effects are not activated through play-card yet.");
-    return;
-  }
-
-  if (!canNormalSummon(player, instance.card)) {
-    addEvent(state, "illegal-action", `${instance.card.name} cannot be Normal Summoned or Set right now.`);
-    return;
-  }
-
-  const tributeCount = requiredTributes(instance.card);
-  const tributeIds = action.tributeInstanceIds ?? [];
-  const targetZone = player.monsterZones[action.zoneIndex];
-
-  if (tributeCount === 0 && tributeIds.length > 0) {
-    addEvent(state, "illegal-action", `${instance.card.name} does not require Tributes.`);
-    return;
-  }
-
-  if (tributeCount > 0) {
-    const validation = validateTributeSelection(player, tributeIds, tributeCount, targetZone);
-
-    if (validation) {
-      addEvent(state, "illegal-action", validation);
-      return;
-    }
-
-    tributeMonsters(state, player, tributeIds);
-  } else if (targetZone) {
-    addEvent(state, "illegal-action", "That Monster Zone is occupied.");
-    return;
-  }
-
-  if (player.monsterZones[action.zoneIndex]) {
-    addEvent(state, "illegal-action", "That Monster Zone is occupied.");
-    return;
-  }
-
-  player.hand = removeAt(player.hand, handIndex);
-  player.normalSummonUsed = true;
-  player.monsterZones[action.zoneIndex] = {
-    instance: {
-      ...instance,
-      summonedTurn: state.turn,
-    },
-    faceDown: action.intent === "set",
-    position: action.intent === "set" ? "defense" : "attack",
-    status: action.intent === "set" ? "set" : "summoned",
-  };
-
-  addEvent(
-    state,
-    tributeCount > 0
-      ? action.intent === "set"
-        ? "monster-tribute-set"
-        : "monster-tribute-summoned"
-      : action.intent === "set"
-        ? "monster-set"
-        : "monster-summoned",
-    `${player.id} ${
-      tributeCount > 0
-        ? action.intent === "set"
-          ? "Tribute Set"
-          : "Tribute Summoned"
-        : action.intent === "set"
-          ? "Set"
-          : "Summoned"
-    } ${instance.card.name}.`,
-  );
-}
-
-function validateTributeSelection(
-  player: DuelPlayerState,
-  tributeIds: string[],
-  tributeCount: number,
-  targetZone: DuelZoneCard | null,
-): string | null {
-  if (tributeIds.length !== tributeCount) {
-    return `This monster requires exactly ${tributeCount} Tribute${tributeCount === 1 ? "" : "s"}.`;
-  }
-
-  const uniqueTributeIds = new Set(tributeIds);
-
-  if (uniqueTributeIds.size !== tributeIds.length) {
-    return "The same monster cannot be Tributed more than once.";
-  }
-
-  if (targetZone && !uniqueTributeIds.has(targetZone.instance.instanceId)) {
-    return "That Monster Zone is occupied. Tribute that monster or choose an empty zone.";
-  }
-
-  for (const tributeId of uniqueTributeIds) {
-    if (!player.monsterZones.some((zone) => zone?.instance.instanceId === tributeId)) {
-      return "Tributes must be monsters you control.";
-    }
-  }
-
-  return null;
-}
-
-function tributeMonsters(state: DuelState, player: DuelPlayerState, tributeIds: string[]): void {
-  const tributeSet = new Set(tributeIds);
-
-  for (const [index, zone] of player.monsterZones.entries()) {
-    if (!zone || !tributeSet.has(zone.instance.instanceId)) {
-      continue;
-    }
-
-    player.monsterZones[index] = null;
-    player.graveyard = [{ ...zone, faceDown: false }, ...player.graveyard];
-    addEvent(state, "card-tributed", `${player.id} Tributed ${zone.instance.card.name}.`);
-  }
-}
-
-function playSpellTrap(
-  state: DuelState,
-  player: DuelPlayerState,
-  handIndex: number,
-  action: Extract<DuelAction, { type: "play-card" }>,
-): void {
-  if (player.spellTrapZones[action.zoneIndex]) {
-    addEvent(state, "illegal-action", "That Spell/Trap Zone is occupied.");
-    return;
-  }
-
-  const instance = player.hand[handIndex];
-
-  if (action.intent === "summon") {
-    addEvent(state, "illegal-action", "Only monsters can be Summoned.");
-    return;
-  }
-
-  if (action.intent === "set") {
-    player.hand = removeAt(player.hand, handIndex);
-    player.spellTrapZones[action.zoneIndex] = {
-      instance,
-      faceDown: true,
-      position: "attack",
-      status: "set",
-    };
-    addEvent(state, "spell-trap-set", `${player.id} Set ${instance.card.name}.`);
-    return;
-  }
-
-  if (instance.card.category === "Trap") {
-    addEvent(state, "illegal-action", "Trap Cards cannot be activated from hand in this engine slice.");
-    return;
-  }
-
-  player.hand = removeAt(player.hand, handIndex);
-  const zoneCard: DuelZoneCard = {
-    instance,
-    faceDown: false,
-    position: "attack",
-    status: "activated",
-  };
-  player.spellTrapZones[action.zoneIndex] = zoneCard;
-
-  if (!shouldRemainOnField(instance.card) && player.spellTrapZones[action.zoneIndex]?.instance.instanceId === instance.instanceId) {
-    player.spellTrapZones[action.zoneIndex] = null;
-    player.graveyard = [zoneCard, ...player.graveyard];
-  }
-
-  addEvent(state, "card-activated", `${player.id} activated ${instance.card.name}.`);
-  addEvent(state, "effect-not-implemented", `${instance.card.name} has no implemented effect script yet.`);
-}
-
-function handleMoveCard(
-  state: DuelState,
-  playerId: PlayerId,
-  instanceId: string,
-  destination: "graveyard" | "banished",
-): void {
-  const source = removeInstanceFromState(state, instanceId);
-
-  if (!source || source.zone.instance.controller !== playerId) {
-    addEvent(state, "illegal-action", "Selected card is not controlled by that player.");
-    return;
-  }
-
-  const player = state.players[playerId];
-
-  if (destination === "graveyard") {
-    player.graveyard = [{ ...source.zone, faceDown: false }, ...player.graveyard];
-    addEvent(state, "card-moved", `${source.zone.instance.card.name} was sent to the Graveyard.`);
-    return;
-  }
-
-  player.banished = [{ ...source.zone, faceDown: false }, ...player.banished];
-  addEvent(state, "card-moved", `${source.zone.instance.card.name} was banished.`);
-}
-
-function handleAttack(
-  state: DuelState,
-  playerId: PlayerId,
-  attackerInstanceId: string,
-  defenderInstanceId?: string,
-): void {
-  if (!requireActivePlayer(state, playerId)) {
-    return;
-  }
-
-  if (state.phase !== "BP") {
-    addEvent(state, "illegal-action", "Attacks can only be declared during the Battle Phase.");
-    return;
-  }
-
-  const attacker = findMonsterZone(state, playerId, attackerInstanceId);
-
-  if (!attacker?.zone || attacker.zone.faceDown || attacker.zone.position !== "attack") {
-    addEvent(state, "illegal-action", "That monster cannot attack.");
-    return;
-  }
-
-  if (attacker.zone.instance.attackedThisTurn) {
-    addEvent(state, "illegal-action", "That monster has already attacked this turn.");
-    return;
-  }
-
-  const defenderPlayerId = opponentOf(playerId);
-  const defender = defenderInstanceId ? findMonsterZone(state, defenderPlayerId, defenderInstanceId) : null;
-
-  if (!defender && state.players[defenderPlayerId].monsterZones.some(Boolean)) {
-    addEvent(state, "illegal-action", "A direct attack is not legal while the opponent controls monsters.");
-    return;
-  }
-
-  state.battleSubstep = "damageCalculation1";
-
-  if (!defender?.zone) {
-    const damage = monsterAtk(attacker.zone);
-    setLifePoints(state, defenderPlayerId, state.players[defenderPlayerId].lp - damage);
-    markAttacked(state, playerId, attacker.index);
-    addEvent(state, "direct-attack", `${attacker.zone.instance.card.name} attacked directly for ${damage}.`);
-    state.battleSubstep = "end";
-    return;
-  }
-
-  resolveBattle(state, playerId, attacker.index, defenderPlayerId, defender.index);
-  state.battleSubstep = "end";
-}
-
-function resolveBattle(
-  state: DuelState,
-  attackerPlayerId: PlayerId,
-  attackerIndex: number,
-  defenderPlayerId: PlayerId,
-  defenderIndex: number,
-): void {
-  const attacker = state.players[attackerPlayerId].monsterZones[attackerIndex];
-  const defender = state.players[defenderPlayerId].monsterZones[defenderIndex];
-
-  if (!attacker || !defender) {
-    return;
-  }
-
-  markAttacked(state, attackerPlayerId, attackerIndex);
-
-  if (defender.faceDown) {
-    flipMonsterFaceUp(state, defenderPlayerId, defenderIndex);
-  }
-
-  const currentDefender = state.players[defenderPlayerId].monsterZones[defenderIndex];
-
-  if (!currentDefender) {
-    return;
-  }
-
-  const atk = monsterAtk(attacker);
-  const opposingValue = currentDefender.position === "attack" ? monsterAtk(currentDefender) : monsterDef(currentDefender);
-
-  if (currentDefender.position === "attack") {
-    if (atk > opposingValue) {
-      setLifePoints(state, defenderPlayerId, state.players[defenderPlayerId].lp - (atk - opposingValue));
-      destroyMonsterAt(state, defenderPlayerId, defenderIndex);
-    } else if (atk < opposingValue) {
-      setLifePoints(state, attackerPlayerId, state.players[attackerPlayerId].lp - (opposingValue - atk));
-      destroyMonsterAt(state, attackerPlayerId, attackerIndex);
-    } else if (atk === opposingValue) {
-      destroyMonsterAt(state, attackerPlayerId, attackerIndex);
-      destroyMonsterAt(state, defenderPlayerId, defenderIndex);
-    }
-  } else if (atk > opposingValue) {
-    destroyMonsterAt(state, defenderPlayerId, defenderIndex);
-  } else if (atk < opposingValue) {
-    setLifePoints(state, attackerPlayerId, state.players[attackerPlayerId].lp - (opposingValue - atk));
-  }
-
-  addEvent(state, "battle-resolved", `${attacker.instance.card.name} battled ${currentDefender.instance.card.name}.`);
-}
-
 function legacyStateFromCore(
   coreState: CoreDuelState,
   cards: readonly CardRecord[],
@@ -1106,6 +658,12 @@ function coreCommandsToEndTurn(
   state: DuelState,
   playerId: PlayerId,
 ): { readonly commands: readonly EngineCommand[] } | { readonly error: string } {
+  if (state.turn <= 1 && state.phase === "M1") {
+    return {
+      commands: [{ type: "end-turn", playerId }],
+    };
+  }
+
   const phaseRoute = coreCommandsToReachPhase(state, playerId, "EP");
 
   if ("error" in phaseRoute) {
@@ -1291,10 +849,6 @@ function legacyBattleSubstepFromCore(coreState: CoreDuelState): DuelState["battl
   }
 }
 
-function isEnginePrompt(prompt: EnginePrompt | undefined): prompt is EnginePrompt {
-  return Boolean(prompt);
-}
-
 function collectCardRecordsFromLegacyState(state: DuelState): CardRecord[] {
   const cardByPasscode = new Map<string, CardRecord>();
 
@@ -1318,32 +872,6 @@ function collectCardRecordsFromLegacyState(state: DuelState): CardRecord[] {
   return [...cardByPasscode.values()];
 }
 
-function createPlayer(
-  id: PlayerId,
-  mainDeck: DuelCardInstance[],
-  deckList: DeckList,
-  cards: CardRecord[],
-): DuelPlayerState {
-  const hand = mainDeck.slice(0, 5);
-  const deck = mainDeck.slice(5);
-  const cardByPasscode = new Map(cards.map((card) => [card.passcode, card]));
-
-  return {
-    id,
-    lp: 8000,
-    deck,
-    hand,
-    monsterZones: emptyZones(),
-    spellTrapZones: emptyZones(),
-    graveyard: [],
-    banished: [],
-    sideDeck: (deckList.side ?? []).map((passcode) => cardByPasscode.get(passcode)).filter(isCardRecord),
-    extraDeck: (deckList.extra ?? []).map((passcode) => cardByPasscode.get(passcode)).filter(isCardRecord),
-    normalSummonUsed: false,
-    lost: false,
-  };
-}
-
 function createRandomLegalDeck(cards: CardRecord[], seed: string): DeckList {
   const legalCopies = cards.flatMap((card) => {
     if (
@@ -1362,153 +890,6 @@ function createRandomLegalDeck(cards: CardRecord[], seed: string): DeckList {
   };
 }
 
-function makeInstances(playerId: PlayerId, passcodes: string[], cards: CardRecord[]): DuelCardInstance[] {
-  const cardByPasscode = new Map(cards.map((card) => [card.passcode, card]));
-
-  return passcodes.map((passcode, index) => {
-    const card = cardByPasscode.get(passcode);
-
-    if (!card) {
-      throw new Error(`Unknown card passcode ${passcode}.`);
-    }
-
-    return {
-      instanceId: `${playerId}-${passcode}-${index + 1}`,
-      card,
-      owner: playerId,
-      controller: playerId,
-      createdTurn: 0,
-      summonedTurn: null,
-      positionChangedTurn: null,
-      attackedThisTurn: false,
-    };
-  });
-}
-
-function assertValidDeck(
-  deck: DeckList,
-  cards: CardRecord[],
-  playerId: PlayerId,
-  allowUnsupportedCards: boolean,
-): void {
-  const result = validateDeck(deck, cards, { allowUnsupportedCards });
-
-  if (!result.valid) {
-    throw new Error(`${playerId} deck is invalid: ${result.errors.join(" ")}`);
-  }
-}
-
-function drawCards(state: DuelState, playerId: PlayerId, count: number): void {
-  if (state.coreState) {
-    const coreResult = reduceDuel(coreStateFromLegacy(state), { type: "draw-card", playerId, count });
-
-    syncLegacyStateFromCoreResult(state, coreResult.state, coreResult.events);
-    return;
-  }
-
-  const player = state.players[playerId];
-
-  for (let drawn = 0; drawn < count; drawn += 1) {
-    const card = player.deck[0];
-
-    if (!card) {
-      player.lost = true;
-      state.winner = opponentOf(playerId);
-      addEvent(state, "deck-out", `${playerId} could not draw a card and lost the duel.`);
-      return;
-    }
-
-    player.deck = player.deck.slice(1);
-    player.hand = [...player.hand, card];
-    addEvent(state, "card-drawn", `${playerId} drew a card.`);
-  }
-}
-
-function flipMonsterFaceUp(state: DuelState, playerId: PlayerId, index: number): void {
-  const zone = state.players[playerId].monsterZones[index];
-
-  if (!zone || !zone.faceDown) {
-    return;
-  }
-
-  state.players[playerId].monsterZones[index] = {
-    ...zone,
-    faceDown: false,
-  };
-}
-
-function removeInstanceFromState(state: DuelState, instanceId: string) {
-  for (const player of Object.values(state.players)) {
-    const areas = [
-      ["monsterZones", player.monsterZones] as const,
-      ["spellTrapZones", player.spellTrapZones] as const,
-      ["graveyard", player.graveyard] as const,
-      ["banished", player.banished] as const,
-    ];
-
-    const handIndex = player.hand.findIndex((card) => card.instanceId === instanceId);
-
-    if (handIndex >= 0) {
-      const instance = player.hand[handIndex];
-      player.hand = removeAt(player.hand, handIndex);
-
-      return {
-        playerId: player.id,
-        area: "hand",
-        index: handIndex,
-        zone: {
-          instance,
-          faceDown: false,
-          position: "attack",
-          status: "activated",
-        } satisfies DuelZoneCard,
-      };
-    }
-
-    for (const [area, zones] of areas) {
-      const index = zones.findIndex((zone) => zone?.instance.instanceId === instanceId);
-
-      if (index >= 0) {
-        const zone = zones[index];
-
-        if (!zone) {
-          continue;
-        }
-
-        if (area === "monsterZones") {
-          player.monsterZones[index] = null;
-        } else if (area === "spellTrapZones") {
-          player.spellTrapZones[index] = null;
-        } else if (area === "graveyard") {
-          player.graveyard = removeAt(player.graveyard, index);
-        } else {
-          player.banished = removeAt(player.banished, index);
-        }
-
-        return {
-          playerId: player.id,
-          area,
-          index,
-          zone,
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
-function destroyMonsterAt(state: DuelState, playerId: PlayerId, index: number): void {
-  const zone = state.players[playerId].monsterZones[index];
-
-  if (!zone) {
-    return;
-  }
-
-  state.players[playerId].monsterZones[index] = null;
-  state.players[playerId].graveyard = [{ ...zone, faceDown: false }, ...state.players[playerId].graveyard];
-}
-
 function setLifePoints(state: DuelState, playerId: PlayerId, value: number): void {
   const lp = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
   state.players[playerId].lp = lp;
@@ -1522,72 +903,12 @@ function setLifePoints(state: DuelState, playerId: PlayerId, value: number): voi
   state.coreState = coreStateFromLegacy(state);
 }
 
-function discardDownToHandLimit(state: DuelState, playerId: PlayerId): void {
-  const player = state.players[playerId];
-
-  while (player.hand.length > 6) {
-    const discarded = player.hand[player.hand.length - 1];
-    player.hand = player.hand.slice(0, -1);
-    player.graveyard = [
-      {
-        instance: discarded,
-        faceDown: false,
-        position: "attack",
-        status: "activated",
-      },
-      ...player.graveyard,
-    ];
-    addEvent(state, "hand-size-discard", `${playerId} discarded ${discarded.card.name} for hand size.`);
-  }
-}
-
-function findMonsterZone(state: DuelState, playerId: PlayerId, instanceId: string) {
-  const index = state.players[playerId].monsterZones.findIndex(
-    (zone) => zone?.instance.instanceId === instanceId,
-  );
-
-  return {
-    index,
-    zone: index >= 0 ? state.players[playerId].monsterZones[index] : null,
-  };
-}
-
 function shouldAutoAdvancePhase(state: DuelState, playerId: PlayerId): boolean {
   if (state.winner || state.activePlayer !== playerId) {
     return false;
   }
 
   return state.phase === "DP" || state.phase === "SP" || state.phase === "EP";
-}
-
-function hasAvailableAttackers(state: DuelState, playerId: PlayerId): boolean {
-  return state.players[playerId].monsterZones.some(
-    (zone) => zone && !zone.faceDown && zone.position === "attack" && !zone.instance.attackedThisTurn,
-  );
-}
-
-function markAttacked(state: DuelState, playerId: PlayerId, zoneIndex: number): void {
-  const zone = state.players[playerId].monsterZones[zoneIndex];
-
-  if (!zone) {
-    return;
-  }
-
-  state.players[playerId].monsterZones[zoneIndex] = {
-    ...zone,
-    instance: {
-      ...zone.instance,
-      attackedThisTurn: true,
-    },
-  };
-}
-
-function monsterAtk(zone: DuelZoneCard): number {
-  return typeof zone.instance.card.monster?.atk === "number" ? zone.instance.card.monster.atk : 0;
-}
-
-function monsterDef(zone: DuelZoneCard): number {
-  return typeof zone.instance.card.monster?.def === "number" ? zone.instance.card.monster.def : 0;
 }
 
 function canNormalSummon(player: DuelPlayerState, card: CardRecord): boolean {
@@ -1620,10 +941,6 @@ function requiredTributes(card: CardRecord): number {
   }
 
   return 0;
-}
-
-function shouldRemainOnField(card: CardRecord): boolean {
-  return card.spell_trap?.icon === "Continuous" || card.spell_trap?.icon === "Equip" || card.spell_trap?.icon === "Field";
 }
 
 function requireActivePlayer(state: DuelState, playerId: PlayerId): boolean {
@@ -1737,10 +1054,6 @@ function createEvent(state: DuelState, type: string, message: string): DuelEvent
   };
 }
 
-function emptyZones(): Array<DuelZoneCard | null> {
-  return Array.from({ length: ZONE_COUNT }, () => null);
-}
-
 function emptyZoneIndexes(zones: Array<DuelZoneCard | null>): number[] {
   return zones.flatMap((zone, index) => (zone === null ? [index] : []));
 }
@@ -1764,10 +1077,6 @@ function phaseLabel(phase: Phase): string {
       EP: "End Phase",
     } satisfies Record<Phase, string>
   )[phase];
-}
-
-function isCardRecord(card: CardRecord | undefined): card is CardRecord {
-  return Boolean(card);
 }
 
 function isSerializedCard(card: SerializedCard | null): card is SerializedCard {

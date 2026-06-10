@@ -2,13 +2,12 @@ import { createCardInstance } from "./cardData";
 import {
   advanceToNextDecision,
   applyAction,
-  assignRandomPlayableDecksToDuel,
+  assignRandomTestDecksToDuel,
   createDuel,
   runPassiveBoardFillerOpponentTurn,
   validateDeck,
   type DeckList,
   type OverrideCardDestination,
-  type ChainLink,
   type DuelAction,
   type DuelCardInstance,
   type DuelZoneCard,
@@ -140,7 +139,7 @@ export function createInitialGameState(cards: CardRecord[], options: CreateIniti
   }
 
   const viewerId = options.viewerId ?? "P1";
-  const assignment = options.decks ? null : assignRandomPlayableDecksToDuel(cards, options.rng ?? Math.random);
+  const assignment = options.decks ? null : assignRandomTestDecksToDuel(cards, options.rng ?? Math.random);
   const decks = options.decks ?? assignment?.decks;
   const opponentBehavior = options.opponentBehavior ?? "none";
   const opponentTargetMonsterCount = options.opponentTargetMonsterCount ?? 3;
@@ -340,6 +339,10 @@ export function isViewerActivePlayer(state: GameState): boolean {
 
 export function canEnterBattle(state: GameState): boolean {
   if (!state.engine || state.engine.phase !== "M1") {
+    return false;
+  }
+
+  if (state.engine.turn <= 1) {
     return false;
   }
 
@@ -727,91 +730,6 @@ function runConfiguredOpponentBehavior(engine: DuelState, state: GameState): Due
   return runPassiveBoardFillerOpponentTurn(engine, {
     targetMonsterCount: state.opponentTargetMonsterCount ?? 3,
   }).state;
-}
-
-function toChainLinkView(link: ChainLink): ChainLinkView {
-  return {
-    id: link.id,
-    playerId: link.playerId,
-    sourceInstanceId: link.sourceInstanceId,
-    cardId: link.cardId ?? null,
-    effectId: link.effectId ?? null,
-    spellSpeed: link.spellSpeed,
-  };
-}
-
-function promptUsesCardSelection(kind: DuelPrompt["kind"]): boolean {
-  return kind === "target" || kind === "discard" || kind === "tribute";
-}
-
-function collectPromptSelectionCandidates(state: GameState): PromptSelectionCandidate[] {
-  if (!state.engine) {
-    return [];
-  }
-
-  const viewer = getViewerId(state);
-  const opponent = getOpposingPlayerId(viewer);
-
-  return [
-    ...state.engine.players[viewer].hand.map((instance, index) => ({
-      id: candidateId(viewer, "hand", index),
-      label: `Hand ${index + 1}: ${instance.card.name}`,
-      instanceId: instance.instanceId,
-      zoneRef: { playerId: viewer, zone: "hand", index } satisfies CoreZoneRef,
-    })),
-    ...collectZoneCandidates(state.engine, viewer, "monsterZone", viewer),
-    ...collectZoneCandidates(state.engine, viewer, "spellTrapZone", viewer),
-    ...collectPileCandidates(state.engine, viewer, "graveyard", viewer),
-    ...collectPileCandidates(state.engine, viewer, "banished", viewer),
-    ...collectZoneCandidates(state.engine, opponent, "monsterZone", viewer),
-    ...collectZoneCandidates(state.engine, opponent, "spellTrapZone", viewer),
-    ...collectPileCandidates(state.engine, opponent, "graveyard", viewer),
-    ...collectPileCandidates(state.engine, opponent, "banished", viewer),
-  ];
-}
-
-function collectZoneCandidates(
-  engine: DuelState,
-  playerId: PlayerId,
-  zone: "monsterZone" | "spellTrapZone",
-  viewer: PlayerId,
-): PromptSelectionCandidate[] {
-  const zones = zone === "monsterZone"
-    ? engine.players[playerId].monsterZones
-    : engine.players[playerId].spellTrapZones;
-
-  return zones.flatMap((zoneCard, index) =>
-    zoneCard
-      ? [{
-          id: candidateId(playerId, zone, index),
-          label: `${playerLabel(playerId, viewer)} ${zone === "monsterZone" ? "Monster" : "Spell/Trap"} ${index + 1}: ${zoneCard.faceDown ? "Set card" : zoneCard.instance.card.name}`,
-          instanceId: zoneCard.instance.instanceId,
-          zoneRef: { playerId, zone, index } satisfies CoreZoneRef,
-        }]
-      : [],
-  );
-}
-
-function collectPileCandidates(
-  engine: DuelState,
-  playerId: PlayerId,
-  zone: "graveyard" | "banished",
-  viewer: PlayerId,
-): PromptSelectionCandidate[] {
-  return engine.players[playerId][zone].map((zoneCard, index) => ({
-    id: candidateId(playerId, zone, index),
-    label: `${playerLabel(playerId, viewer)} ${zone === "graveyard" ? "GY" : "Banished"} ${index + 1}: ${zoneCard.instance.card.name}`,
-    instanceId: zoneCard.instance.instanceId,
-    zoneRef: { playerId, zone, index } satisfies CoreZoneRef,
-  }));
-}
-
-function candidateId(playerId: PlayerId, zone: CoreZoneRef["zone"], index: number): string {
-  return `${playerId}:${zone}:${index}`;
-}
-
-function playerLabel(playerId: PlayerId, viewer: PlayerId): string {
-  return playerId === viewer ? "Player" : "Opponent";
 }
 
 function deckPlayerLabel(playerId: PlayerId): string {

@@ -1,5 +1,10 @@
 # Playable Engine Audit
 
+> Historical note: this audit captures a previous playable-engine milestone.
+> Some referenced card-script files and tests are no longer present in the
+> current online-only implementation. Treat this as archival evidence, not a
+> live readiness report.
+
 Date: 2026-05-24
 
 ## Scope

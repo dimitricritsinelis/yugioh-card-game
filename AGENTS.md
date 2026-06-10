@@ -152,7 +152,7 @@ playbook — follow it so we don't rediscover these footguns each time.
 vercel env pull /tmp/v.env --environment=production --yes   # may need a retry
 grep -oE '^[A-Z_]+=' /tmp/v.env | sort -u                   # names only
 # Required keys: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GAME_SEAT_TOKEN_SALT,
-#                VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_ONLINE_MULTIPLAYER_ENABLED
+#                VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
 rm -f /tmp/v.env                                            # scrub when done
 ```
 

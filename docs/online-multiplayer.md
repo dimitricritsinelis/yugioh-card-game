@@ -32,7 +32,6 @@ Frontend variables:
 ```sh
 VITE_SUPABASE_URL=...
 VITE_SUPABASE_ANON_KEY=...
-VITE_ONLINE_MULTIPLAYER_ENABLED=true
 ```
 
 Server-only variables:
@@ -64,7 +63,7 @@ The migrations enable RLS, keep canonical tables private from anon clients, rest
 
 ## Local Notes
 
-Local/offline duel mode is unchanged. During `npm run dev`, Vite hosts `/api/game` with an in-memory `InMemoryGameStore`; this supports two-tab local online play without Supabase realtime. Realtime subscriptions are optional locally, and fallback polling keeps tabs in sync.
+During `npm run dev`, Vite hosts the online `/api/game` contract with an in-memory `InMemoryGameStore`; this supports two-tab local online play without Supabase realtime. Realtime subscriptions are optional locally, and fallback polling keeps tabs in sync.
 
 Production/deployed online play uses the Vercel `/api/game` function and Supabase-backed state. Set the Supabase environment variables before deploying.
 

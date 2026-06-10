@@ -1,5 +1,3 @@
-/// <reference path="./vite.config.d.ts" />
-
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { cp, mkdir } from "node:fs/promises";

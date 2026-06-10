@@ -1,5 +1,9 @@
 # YUGIOH Frontend Tasks
 
+> Historical note: this was an earlier frontend app-shell task ledger. The
+> current project direction is online-only and is governed by `AGENTS.md` plus
+> the live source/tests. Treat this file as archival context.
+
 ## Purpose
 
 Build the frontend app-shell flow for the existing Yu-Gi-Oh duel prototype:

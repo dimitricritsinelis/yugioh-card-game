@@ -57,15 +57,17 @@ export function validateDeck(
       continue;
     }
 
-    if (card.legality.goat_world_pool !== true) {
-      errors.push(`${card.name} is not legal in the Goat World card pool.`);
-      continue;
-    }
+    if (options.allowUnsupportedCards !== true) {
+      if (card.legality.goat_world_pool !== true) {
+        errors.push(`${card.name} is not legal in the Goat World card pool.`);
+        continue;
+      }
 
-    if (count > card.legality.max_copies) {
-      errors.push(
-        `${card.name} exceeds ${card.legality.restriction} copy limit (${count}/${card.legality.max_copies}).`,
-      );
+      if (count > card.legality.max_copies) {
+        errors.push(
+          `${card.name} exceeds ${card.legality.restriction} copy limit (${count}/${card.legality.max_copies}).`,
+        );
+      }
     }
   }
 

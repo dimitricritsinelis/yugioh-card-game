@@ -65,6 +65,34 @@ describe("playable deck validation", () => {
     expect(result.valid).toBe(false);
     expect(result.errors.join(" ")).toContain("Pot of Greed exceeds Limited copy limit");
   });
+
+  it("allows unsupported copy-limit cases only when explicitly requested", () => {
+    const result = validateDeck(deckWithPriority(["Change of Heart"]), cards, {
+      allowUnsupportedCards: true,
+    });
+
+    expect(result).toEqual({
+      valid: true,
+      errors: [],
+    });
+  });
+
+  it("keeps structural deck limits even when unsupported cards are allowed", () => {
+    const result = validateDeck(
+      {
+        main: deckWithPriority(["Thousand-Eyes Restrict"]).main,
+        side: [cardByName("Battle Ox").passcode],
+        extra: [cardByName("Battle Ox").passcode],
+      },
+      cards,
+      { allowUnsupportedCards: true },
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("Side Deck is not supported for playable duels.");
+    expect(result.errors).toContain("Extra Deck is not supported for playable duels.");
+    expect(result.errors.join(" ")).toContain("Extra/Fusion Decks are outside playable scope");
+  });
 });
 
 function legalMainDeck(size: number): string[] {
