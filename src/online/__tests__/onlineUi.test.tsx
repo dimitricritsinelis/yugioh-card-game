@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import cardsJson from "../../../public/yugioh_cards/cards.json";
 import { LobbyScreen } from "../../components/LobbyScreen";
 import type { CardRecord } from "../../types";
+import { FALLBACK_POLL_MS } from "../client/useOnlineGame";
 import { InMemoryGameStore, OnlineGameService } from "../server/gameService";
 import type { OnlineGameView } from "../types";
 
@@ -188,6 +189,10 @@ describe("online UI smoke", () => {
   });
 
   it("updates the online spectator board through fallback polling when realtime is quiet", async () => {
+    // Fake only interval timers so the fallback poll can be fired deterministically
+    // while promises, waitFor, and findBy* keep running on real time.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+
     const created = await service.createGame({ p1Name: "Yugi", clientId: "poll-p1" });
     const p1Token = created.seatToken!;
     await service.claimSeat({
@@ -230,10 +235,14 @@ describe("online UI smoke", () => {
       },
     });
 
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FALLBACK_POLL_MS);
+    });
+
     await waitFor(() => {
       expect(screen.getByText("Set a card.")).toBeTruthy();
-    }, { timeout: 7_000 });
-  }, 10_000);
+    });
+  });
 });
 
 function makeLobbyView(): OnlineGameView {
