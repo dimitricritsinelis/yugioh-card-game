@@ -21,7 +21,29 @@
 
 ## P-0: Baseline repair + CI
 
-Status: TODO
+Status: DONE
+
+Progress:
+- Triage result: all 18 failures were stale test expectations relative to two
+  deliberate behavior changes shipped with the manual-play/online pivot —
+  (1) the GOAT "no Battle Phase on turn 1" rule (`reducer.ts`, added in
+  e00f4df) and (2) default local games switching from the playable fixture
+  decks to the `goatTestDecks.ts` presets. No engine regressions were found.
+- Updated battle/winConditions rigged fixtures to start from turn 2;
+  rewrote phaseFlow and engine.test.ts phase-walk tests to assert the turn-1
+  Battle Phase rejection explicitly and walk the full phase chain on turn 2;
+  extended the determinism command stream across three turns; the frontend
+  smoke + battle-availability tests now roll to turn 2 before entering battle;
+  default-deck tests now assert the GOAT test deck presets.
+- Real bug fixed: `src/online/publicView.ts` `canEnterBattle` offered the
+  online "Battle Phase" advance on turn 1 and the engine then rejected it;
+  it now matches `gameLogic.ts` with the turn-1 check.
+- Added `.github/workflows/ci.yml` (npm ci, typecheck, test, build on every
+  push to main and every PR).
+- Known flake (pre-existing, tracked separately): the online spectator
+  fallback-polling UI test is timing-sensitive under full-suite load.
+- Validation: `npm run typecheck` PASS, `npm test` 139/139 PASS,
+  `npm run build` PASS.
 
 Goal: green test baseline so every later diff is attributable.
 

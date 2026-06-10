@@ -20,13 +20,11 @@ import {
   createDuel as createEngineDuel,
   getLegalActions,
   GOAT_TEST_DECKS,
-  KAIBA_PLAYABLE_DECK_FIXTURE,
   KAIBA_GOAT_TEST_DECK,
   runPassiveBoardFillerOpponentTurn,
   serializeDuel,
   validateGoatTestDeckDefinitions,
   validateDeck,
-  YUGI_PLAYABLE_DECK_FIXTURE,
   YUGI_GOAT_TEST_DECK,
 } from "../index";
 import type { DeckList, DuelCardInstance, DuelState, DuelZoneCard, PlayerId } from "../types";
@@ -211,10 +209,15 @@ describe("duel core rules", () => {
   it("advances through the turn phases and resets for the next player", () => {
     let state = createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) }, firstPlayer: "P1" });
 
-    for (const expectedPhase of ["SP", "M1", "BP", "M2", "EP"] as const) {
+    for (const expectedPhase of ["SP", "M1"] as const) {
       state = applyAction(state, { type: "advance-phase", playerId: "P1" }).state;
       expect(state.phase).toBe(expectedPhase);
     }
+
+    // GOAT rules: turn 1 has no Battle Phase, so advancing past Main Phase 1
+    // is rejected and the turn ends from Main Phase 1 instead.
+    const blocked = applyAction(state, { type: "advance-phase", playerId: "P1" });
+    expect(blocked.state.phase).toBe("M1");
 
     const nextTurn = applyAction(state, { type: "end-turn", playerId: "P1" }).state;
 
@@ -222,6 +225,13 @@ describe("duel core rules", () => {
     expect(nextTurn.activePlayer).toBe("P2");
     expect(nextTurn.phase).toBe("DP");
     expect(nextTurn.turnFlags.drawnThisTurn).toBe(false);
+
+    // From turn 2 onward every phase, including the Battle Phase, is reachable.
+    let secondTurn = nextTurn;
+    for (const expectedPhase of ["SP", "M1", "BP", "M2", "EP"] as const) {
+      secondTurn = applyAction(secondTurn, { type: "advance-phase", playerId: "P2" }).state;
+      expect(secondTurn.phase).toBe(expectedPhase);
+    }
   });
 
   it("offers Main Phase play actions and basic Battle Phase attacks", () => {
@@ -686,12 +696,13 @@ describe("frontend adapter", () => {
     expect(adjusted.opponent.lp).toBe(7200);
   });
 
-  it("starts default games with independently assigned playable fixture decks", () => {
+  it("starts default games with independently assigned GOAT test deck presets", () => {
     const game = createInitialGameState(cards, {
       rng: sequenceRng([0.1, 0.9, 0.2, 0.3]),
       seed: "default-presets",
       suppressWarnings: true,
     });
+    const expected = assignRandomTestDecksToDuel(cards, sequenceRng([0.1, 0.9, 0.2, 0.3]));
     const playerMain = [
       ...game.engine!.players.P1.hand,
       ...game.engine!.players.P1.deck,
@@ -701,10 +712,12 @@ describe("frontend adapter", () => {
       ...game.engine!.players.P2.deck,
     ].map((instance) => instance.card.passcode);
 
+    expect(expected.player.definition.metadata.id).toBe("yugi_goat_test");
+    expect(expected.opponent.definition.metadata.id).toBe("kaiba_goat_test");
     expect(playerMain).toHaveLength(40);
     expect(opponentMain).toHaveLength(40);
-    expect(sorted(playerMain)).toEqual(sorted(YUGI_PLAYABLE_DECK_FIXTURE.deck.main));
-    expect(sorted(opponentMain)).toEqual(sorted(KAIBA_PLAYABLE_DECK_FIXTURE.deck.main));
+    expect(sorted(playerMain)).toEqual(sorted(expected.decks.P1.main));
+    expect(sorted(opponentMain)).toEqual(sorted(expected.decks.P2.main));
   });
 
   it("only exposes legal board placement actions and marks unplayable hand cards", () => {
@@ -847,10 +860,16 @@ describe("frontend adapter", () => {
       },
     };
 
-    expect(canEnterBattle(gameWithAttacker)).toBe(true);
-    expect(getTurnFlowActionLabel(gameWithAttacker)).toBe("Battle Phase");
+    // GOAT rules: turn 1 has no Battle Phase even with an attacker available.
+    expect(canEnterBattle(gameWithAttacker)).toBe(false);
+    expect(getTurnFlowActionLabel(gameWithAttacker)).toBe("End Turn");
 
-    const battle = continueTurnFlow(gameWithAttacker);
+    const secondTurn = continueTurnFlow(gameWithAttacker);
+    expect(secondTurn.engine!.turn).toBe(2);
+    expect(canEnterBattle(secondTurn)).toBe(true);
+    expect(getTurnFlowActionLabel(secondTurn)).toBe("Battle Phase");
+
+    const battle = continueTurnFlow(secondTurn);
     expect(battle.phase).toBe("BP");
     expect(getTurnFlowActionLabel(battle)).toBe("Main Phase 2");
 

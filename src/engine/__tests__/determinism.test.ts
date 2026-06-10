@@ -22,6 +22,8 @@ describe("engine determinism guards", () => {
       throw new Error(`Expected opening hand to include cardId ${BATTLE_OX_ID}.`);
     }
 
+    // Turn 1 has no Battle Phase, so the stream summons on turn 1, passes the
+    // turn through both players, and attacks on turn 3.
     const commands: readonly EngineCommand[] = [
       { type: "change-phase", playerId: "P1", phase: "SP" },
       { type: "change-phase", playerId: "P1", phase: "M1" },
@@ -31,6 +33,15 @@ describe("engine determinism guards", () => {
         instanceId: battleOx.instanceId,
         zoneIndex: 0,
       },
+      { type: "end-turn", playerId: "P1" },
+      { type: "change-phase", playerId: "P2", phase: "SP" },
+      { type: "change-phase", playerId: "P2", phase: "M1" },
+      { type: "change-phase", playerId: "P2", phase: "BP" },
+      { type: "change-phase", playerId: "P2", phase: "M2" },
+      { type: "change-phase", playerId: "P2", phase: "EP" },
+      { type: "end-turn", playerId: "P2" },
+      { type: "change-phase", playerId: "P1", phase: "SP" },
+      { type: "change-phase", playerId: "P1", phase: "M1" },
       { type: "change-phase", playerId: "P1", phase: "BP" },
       {
         type: "attack",

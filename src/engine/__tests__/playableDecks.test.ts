@@ -4,6 +4,7 @@ import { createInitialGameState } from "../../gameLogic";
 import type { CardRecord } from "../../types";
 import {
   assignRandomPlayableDecksToDuel,
+  assignRandomTestDecksToDuel,
   clonePlayableDeck,
   createCoreDuel,
   KAIBA_PLAYABLE_DECK_FIXTURE,
@@ -73,12 +74,13 @@ describe("supported playable deck fixtures", () => {
     expect(YUGI_PLAYABLE_DECK_FIXTURE.deck.main[0]).toBe(originalFixtureTop);
   });
 
-  it("uses playable fixture decks for default local game setup", () => {
+  it("uses the GOAT test deck presets for default local game setup", () => {
     const game = createInitialGameState(cards, {
       rng: sequenceRng([0.1, 0.9]),
       seed: "default-playable-fixtures",
       suppressWarnings: true,
     });
+    const expected = assignRandomTestDecksToDuel(cards, sequenceRng([0.1, 0.9]));
     const playerMain = [
       ...game.engine!.players.P1.hand,
       ...game.engine!.players.P1.deck,
@@ -88,10 +90,12 @@ describe("supported playable deck fixtures", () => {
       ...game.engine!.players.P2.deck,
     ].map((instance) => instance.card.passcode);
 
+    expect(expected.player.definition.metadata.id).toBe("yugi_goat_test");
+    expect(expected.opponent.definition.metadata.id).toBe("kaiba_goat_test");
     expect(playerMain).toHaveLength(40);
     expect(opponentMain).toHaveLength(40);
-    expect(sorted(playerMain)).toEqual(sorted(YUGI_PLAYABLE_DECK_FIXTURE.deck.main));
-    expect(sorted(opponentMain)).toEqual(sorted(KAIBA_PLAYABLE_DECK_FIXTURE.deck.main));
+    expect(sorted(playerMain)).toEqual(sorted(expected.decks.P1.main));
+    expect(sorted(opponentMain)).toEqual(sorted(expected.decks.P2.main));
   });
 });
 

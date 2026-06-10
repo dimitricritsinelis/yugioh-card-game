@@ -64,7 +64,10 @@ describe("golden frontend smoke scenario", () => {
       summon!.zoneKind,
       summon!.zoneIndex,
     );
-    const battleState = continueTurnFlow(afterSummon);
+    // Turn 1 has no Battle Phase: the first flow advance ends the turn (solo
+    // mode keeps the same player), the second one enters battle on turn 2.
+    const secondTurn = continueTurnFlow(afterSummon);
+    const battleState = continueTurnFlow(secondTurn);
     const attackTargets = getLegalAttackTargetsForCard(battleState, summon!.instanceId);
     const afterAttack = attackWithSelectedCard(
       { ...battleState, selectedCardId: summon!.instanceId },
@@ -75,6 +78,8 @@ describe("golden frontend smoke scenario", () => {
       instance: { card: { passcode: BATTLE_OX_ID } },
       faceDown: false,
     });
+    expect(secondTurn.engine!.turn).toBe(2);
+    expect(secondTurn.phase).toBe("M1");
     expect(battleState.phase).toBe("BP");
     expect(attackTargets).toHaveLength(1);
     expect(attackTargets[0].target).toEqual({ kind: "direct" });
