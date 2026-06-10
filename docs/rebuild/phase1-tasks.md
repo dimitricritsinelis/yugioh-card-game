@@ -67,7 +67,34 @@ Acceptance:
 
 ## P-1: Single-state unification
 
-Status: TODO
+Status: DONE
+
+Progress:
+- Core-first routing: `applyAction` now treats the embedded core state as the
+  single source of truth (`requireCoreState`); the lossy legacy→core
+  conversion (`coreStateFromLegacy` and friends) is deleted. The projection
+  direction is exported as `projectDuelFromCore`.
+- The two remaining legacy-only mutations moved into the core reducer:
+  `activate-card` now also flips a face-down Set Spell/Trap on the field
+  (with the trap set-turn restriction), and a new `set-life-points` core
+  command replaces the legacy LP edit (override-class: ignores turn order,
+  works after the duel ends, runs win conditions). The dev board filler now
+  places monsters via core `override-card-location` commands.
+- Persistence envelope v2 (`src/engine/serialization.ts`):
+  `packEngineStateForStorage`/`unpackEngineStateFromStorage` store
+  `{engineStateVersion: 2, mode, events, core}`; the legacy projection is
+  re-derived on load and never persisted. Pre-versioning rows are lifted from
+  their embedded `coreState`; corrupt/unknown versions are rejected with
+  invariant validation. Wired at all three Supabase boundaries in
+  `gameService` (insert, commit RPC, row load).
+- Tests: `stateUnification.test.ts` proves the envelope round-trips
+  identically after EVERY action of a multi-turn scripted game (including
+  activate-set-card, set-life-points, override), v1 lifting, corrupt-row
+  rejection, plus static guards (no reverse conversion symbols anywhere; only
+  duel.ts assigns `.coreState`). All rigged tests in `engine.test.ts` now rig
+  core-first via `patchDuelCoreState` (new `testing/builders.ts` helper).
+- Validation: `npm run typecheck` PASS, `npm test` 144/144 PASS,
+  `npm run build` PASS.
 
 Goal: core `DuelState` becomes the one persisted truth; the legacy UI shape
 becomes a pure projection.

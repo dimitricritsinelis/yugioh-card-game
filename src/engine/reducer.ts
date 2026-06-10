@@ -22,6 +22,7 @@ import type {
   CardDestroyedEvent,
   DuelFinishedEvent,
   DuelStartedEvent,
+  EffectActivatedEvent,
   EngineEvent,
   IllegalActionEvent,
   LpChangedEvent,
@@ -168,9 +169,41 @@ export function reduceDuel(state: DuelState, command: EngineCommand): EngineResu
       return setSpellTrap(state, command);
     case "override-card-location":
       return overrideCardLocation(state, command);
+    case "set-life-points":
+      return setLifePointsCommand(state, command);
     case "move-card":
       return unimplementedCommand(state, command);
   }
+}
+
+function setLifePointsCommand(
+  state: DuelState,
+  command: Extract<EngineCommand, { type: "set-life-points" }>,
+): EngineResult {
+  if (!isPlayerId(command.playerId) || !isPlayerId(command.targetPlayerId)) {
+    return illegalResult(state, command, `Unknown player: ${command.targetPlayerId}.`, command.playerId);
+  }
+
+  const target = state.players[command.targetPlayerId];
+  const lp = Math.max(0, Math.floor(Number.isFinite(command.value) ? command.value : 0));
+  const eventBuilder = createEventBuilder(state.eventIds.length);
+  const lpChanged = createLpChangedEvent(eventBuilder, command.targetPlayerId, target.lp, lp, state.turn);
+  const changedState = appendEventIds(
+    {
+      ...cloneDuelState(state),
+      players: {
+        ...state.players,
+        [command.targetPlayerId]: {
+          ...target,
+          lp,
+        },
+      },
+    },
+    [lpChanged],
+  );
+  const terminal = applyAutomaticWinConditions(changedState, eventBuilder);
+
+  return result(command, terminal.state, [lpChanged, ...terminal.events]);
 }
 
 function changePhase(state: DuelState, command: Extract<EngineCommand, { type: "change-phase" }>): EngineResult {
@@ -376,15 +409,15 @@ function activateSpellTrap(state: DuelState, command: Extract<EngineCommand, { t
     return preflight;
   }
 
-  if (!isMainPhase(state.phase)) {
-    return illegalResult(state, command, "Cards can only be activated during Main Phase 1 or Main Phase 2.", command.playerId);
-  }
-
   const player = state.players[command.playerId];
   const handIndex = player.hand.findIndex((card) => card.instanceId === command.instanceId);
 
   if (handIndex < 0) {
-    return illegalResult(state, command, "Selected card is not in that player's hand.", command.playerId);
+    return activateSetSpellTrap(state, command);
+  }
+
+  if (!isMainPhase(state.phase)) {
+    return illegalResult(state, command, "Cards can only be activated during Main Phase 1 or Main Phase 2.", command.playerId);
   }
 
   if (command.zoneIndex < 0 || command.zoneIndex >= player.spellTrapZones.length) {
@@ -414,6 +447,65 @@ function activateSpellTrap(state: DuelState, command: Extract<EngineCommand, { t
   };
   const eventBuilder = createEventBuilder(state.eventIds.length);
   const event = createSpellTrapSetEvent(eventBuilder, command.playerId, activatedCard, command.zoneIndex, state.turn);
+  const nextState = appendEventIds(
+    {
+      ...cloneDuelState(state),
+      players: {
+        ...state.players,
+        [command.playerId]: nextPlayer,
+      },
+    },
+    [event],
+  );
+
+  return result(command, nextState, [event]);
+}
+
+// Manual-play activation of a face-down Spell/Trap already on the field: flip
+// it face-up. No effect resolves. Allowed in any phase of the controller's own
+// turn; Traps cannot be activated the turn they were Set.
+function activateSetSpellTrap(
+  state: DuelState,
+  command: Extract<EngineCommand, { type: "activate-card" }>,
+): EngineResult {
+  const player = state.players[command.playerId];
+  const zoneIndex = player.spellTrapZones.findIndex((zone) => zone?.instanceId === command.instanceId);
+  const zone = zoneIndex >= 0 ? player.spellTrapZones[zoneIndex] : null;
+
+  if (!zone) {
+    return illegalResult(state, command, "Selected card is not a Set Spell/Trap you control.", command.playerId);
+  }
+
+  if (zone.face !== "faceDown") {
+    return illegalResult(state, command, "That card is already face-up.", command.playerId);
+  }
+
+  const definition = state.cardDefinitions?.[zone.cardId];
+
+  if (definition?.kind === "trap" && (zone.setTurn == null || zone.setTurn >= state.turn)) {
+    return illegalResult(state, command, "Trap Cards cannot be activated the turn they are Set.", command.playerId);
+  }
+
+  const activatedCard: ZoneCard = {
+    ...zone,
+    face: "faceUp",
+    position: null,
+    visibility: "public",
+  };
+  const nextPlayer: PlayerState = {
+    ...player,
+    spellTrapZones: replaceArrayIndex(player.spellTrapZones, zoneIndex, activatedCard),
+  };
+  const eventBuilder = createEventBuilder(state.eventIds.length);
+  const event: EffectActivatedEvent = {
+    id: eventBuilder.nextId(),
+    type: "effect-activated",
+    message: `${command.playerId} activated ${definition?.display.name ?? "a Set card"}.`,
+    playerId: command.playerId,
+    instanceId: activatedCard.instanceId,
+    cardId: activatedCard.cardId,
+    turn: state.turn,
+  };
   const nextState = appendEventIds(
     {
       ...cloneDuelState(state),

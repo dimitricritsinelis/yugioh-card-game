@@ -45,7 +45,7 @@ export function createDuel(config: CreateDuelConfig): DuelState {
     shuffleDecks: false,
   });
 
-  return legacyStateFromCore(core.state, config.cards, mode, core.events);
+  return projectDuelFromCore(core.state, config.cards, mode, core.events);
 }
 
 export function getLegalActions(state: DuelState, playerId: PlayerId): DuelAction[] {
@@ -177,53 +177,13 @@ export function applyAction(state: DuelState, action: DuelAction): DuelResult {
     case "set-phase":
     case "move-card":
     case "override-card-location":
-      handleCoreRoutedAction(draft, action);
-      break;
     case "activate-set-card":
-      handleActivateSetCard(draft, action.playerId, action.instanceId);
-      break;
     case "set-life-points":
-      setLifePoints(draft, action.targetPlayerId, action.value);
+      handleCoreRoutedAction(draft, action);
       break;
   }
 
   return result(draft, eventStart);
-}
-
-// Manual-play activation of a face-down Spell/Trap already on the field: flip it
-// face-up. No effect is resolved. Traps cannot be activated the turn they were Set.
-function handleActivateSetCard(state: DuelState, playerId: PlayerId, instanceId: string): void {
-  if (!requireActivePlayer(state, playerId)) {
-    return;
-  }
-
-  const player = state.players[playerId];
-  const index = player.spellTrapZones.findIndex((zone) => zone?.instance.instanceId === instanceId);
-  const zone = index >= 0 ? player.spellTrapZones[index] : null;
-
-  if (!zone) {
-    addEvent(state, "illegal-action", "Selected card is not a Set Spell/Trap you control.");
-    return;
-  }
-
-  if (!zone.faceDown) {
-    addEvent(state, "illegal-action", "That card is already face-up.");
-    return;
-  }
-
-  if (zone.instance.card.category === "Trap" && (zone.setTurn == null || zone.setTurn >= state.turn)) {
-    addEvent(state, "illegal-action", "Trap Cards cannot be activated the turn they are Set.");
-    return;
-  }
-
-  player.spellTrapZones[index] = {
-    ...zone,
-    faceDown: false,
-    position: "attack",
-    status: "activated",
-  };
-  state.coreState = coreStateFromLegacy(state);
-  addEvent(state, "card-activated", `${playerId} activated ${zone.instance.card.name}.`);
 }
 
 export function advanceToNextDecision(state: DuelState, playerId: PlayerId): DuelResult {
@@ -302,46 +262,56 @@ function fillOpponentMonsterBoardForTestingInternal(
   state: DuelState,
   options: PassiveBoardFillerOptions,
 ): void {
-  const opponent = state.players.P2;
   const targetMonsterCount = clampTargetMonsterCount(options.targetMonsterCount ?? 3);
-  let currentMonsterCount = opponent.monsterZones.filter(Boolean).length;
+  let currentMonsterCount = state.players.P2.monsterZones.filter(Boolean).length;
 
   while (currentMonsterCount < targetMonsterCount) {
-    const zoneIndex = opponent.monsterZones.findIndex((zone) => zone === null);
+    const zoneIndex = state.players.P2.monsterZones.findIndex((zone) => zone === null);
 
     if (zoneIndex < 0) {
       return;
     }
 
-    const nextMonster = takePassiveBoardFillerMonster(opponent);
+    const nextMonster = findPassiveBoardFillerMonster(state.players.P2);
 
     if (!nextMonster) {
       addEvent(state, "passive-board-filler-empty", "PassiveBoardFillerOpponent found no monsters to place.");
       return;
     }
 
-    debugPlaceMonsterOnOpponentField(state, nextMonster.instance, zoneIndex, nextMonster.source);
+    handleCoreRoutedAction(state, {
+      type: "override-card-location",
+      playerId: "P2",
+      instanceId: nextMonster.instance.instanceId,
+      destination: { zone: "monsterZone", index: zoneIndex, face: "faceUp", position: "attack" },
+    });
+
+    if (!state.players.P2.monsterZones[zoneIndex]) {
+      return;
+    }
+
+    addEvent(
+      state,
+      "debug-opponent-monster-placed",
+      `PassiveBoardFillerOpponent placed ${nextMonster.instance.card.name} from ${nextMonster.source}.`,
+    );
     currentMonsterCount += 1;
   }
 }
 
-function takePassiveBoardFillerMonster(
+function findPassiveBoardFillerMonster(
   player: DuelPlayerState,
 ): { instance: DuelCardInstance; source: "hand" | "deck" } | null {
   const handIndex = findPassiveBoardFillerMonsterIndex(player.hand);
 
   if (handIndex >= 0) {
-    const [instance] = player.hand.slice(handIndex, handIndex + 1);
-    player.hand = removeAt(player.hand, handIndex);
-    return { instance, source: "hand" };
+    return { instance: player.hand[handIndex], source: "hand" };
   }
 
   const deckIndex = findPassiveBoardFillerMonsterIndex(player.deck);
 
   if (deckIndex >= 0) {
-    const [instance] = player.deck.slice(deckIndex, deckIndex + 1);
-    player.deck = removeAt(player.deck, deckIndex);
-    return { instance, source: "deck" };
+    return { instance: player.deck[deckIndex], source: "deck" };
   }
 
   return null;
@@ -369,29 +339,6 @@ function isPassiveBoardFillerMonster(card: CardRecord, lowLevelOnly: boolean): b
   return (card.monster?.level ?? 99) <= 4;
 }
 
-function debugPlaceMonsterOnOpponentField(
-  state: DuelState,
-  instance: DuelCardInstance,
-  zoneIndex: number,
-  source: "hand" | "deck",
-): void {
-  state.players.P2.monsterZones[zoneIndex] = {
-    instance: {
-      ...instance,
-      summonedTurn: state.turn,
-      controller: "P2",
-    },
-    faceDown: false,
-    position: "attack",
-    status: "summoned",
-  };
-  addEvent(
-    state,
-    "debug-opponent-monster-placed",
-    `PassiveBoardFillerOpponent placed ${instance.card.name} from ${source}.`,
-  );
-}
-
 function clampTargetMonsterCount(targetMonsterCount: number): number {
   if (!Number.isFinite(targetMonsterCount)) {
     return 3;
@@ -400,7 +347,10 @@ function clampTargetMonsterCount(targetMonsterCount: number): number {
   return Math.max(0, Math.min(ZONE_COUNT, Math.floor(targetMonsterCount)));
 }
 
-function legacyStateFromCore(
+// Projects the authoritative core state into the legacy UI-facing shape.
+// This is the ONLY direction state conversion happens; there is no
+// legacy-to-core conversion.
+export function projectDuelFromCore(
   coreState: CoreDuelState,
   cards: readonly CardRecord[],
   mode: CreateDuelConfig["mode"] = "match",
@@ -436,7 +386,7 @@ function syncLegacyStateFromCoreResult(
   events: readonly EngineEvent[],
 ): void {
   const cards = collectCardRecordsFromLegacyState(state);
-  const next = legacyStateFromCore(coreState, cards, state.mode, []);
+  const next = projectDuelFromCore(coreState, cards, state.mode, []);
 
   state.coreState = coreState;
   state.turn = next.turn;
@@ -457,7 +407,7 @@ function handleCoreRoutedAction(state: DuelState, action: DuelAction): void {
     return;
   }
 
-  let coreState = coreStateFromLegacy(state);
+  let coreState = requireCoreState(state);
   const events: EngineEvent[] = [];
 
   for (const command of routed.commands) {
@@ -489,7 +439,7 @@ function isCoreRoutableLegalAction(state: DuelState, action: DuelAction): boolea
     return false;
   }
 
-  let coreState = coreStateFromLegacy(state);
+  let coreState = requireCoreState(state);
 
   for (const command of routed.commands) {
     const coreResult = reduceDuel(coreState, command);
@@ -554,10 +504,37 @@ function coreCommandsFromLegacyAction(
           },
         ],
       };
-    case "activate-set-card":
-      return { error: "Activating a Set card is handled directly, not through core routing." };
+    case "activate-set-card": {
+      const zoneIndex = state.players[action.playerId].spellTrapZones.findIndex(
+        (zone) => zone?.instance.instanceId === action.instanceId,
+      );
+
+      if (zoneIndex < 0) {
+        return { error: "Selected card is not a Set Spell/Trap you control." };
+      }
+
+      return {
+        commands: [
+          {
+            type: "activate-card",
+            playerId: action.playerId,
+            instanceId: action.instanceId,
+            zoneIndex,
+          },
+        ],
+      };
+    }
     case "set-life-points":
-      return { error: "Life point editing is handled by the debug life point control." };
+      return {
+        commands: [
+          {
+            type: "set-life-points",
+            playerId: action.playerId,
+            targetPlayerId: action.targetPlayerId,
+            value: action.value,
+          },
+        ],
+      };
   }
 }
 
@@ -684,27 +661,15 @@ function nextPhaseAfter(phase: Phase): Phase | null {
   return currentIndex >= 0 ? PHASES[currentIndex + 1] ?? null : null;
 }
 
-function coreStateFromLegacy(state: DuelState): CoreDuelState {
-  const previousCore = state.coreState;
+// Core-first invariant: the embedded core state is the single source of truth
+// for rules. The legacy shape around it is a derived projection and is never
+// converted back.
+function requireCoreState(state: DuelState): CoreDuelState {
+  if (!state.coreState) {
+    throw new Error("Legacy duel state is missing its embedded core state; commands route core-first.");
+  }
 
-  return {
-    id: state.id,
-    seed: state.seed,
-    turnMode: state.mode,
-    turn: state.turn,
-    phase: state.phase,
-    activePlayer: state.activePlayer,
-    turnFlags: { ...state.turnFlags },
-    damageStep: previousCore?.damageStep,
-    cardDefinitions: previousCore?.cardDefinitions,
-    players: {
-      P1: corePlayerFromLegacy(state.players.P1, state.turn),
-      P2: corePlayerFromLegacy(state.players.P2, state.turn),
-    },
-    pendingAttack: previousCore?.pendingAttack ?? null,
-    eventIds: previousCore?.eventIds ?? state.events.map((event) => event.id),
-    winner: state.winner,
-  };
+  return state.coreState;
 }
 
 function legacyPlayerFromCore(
@@ -723,22 +688,6 @@ function legacyPlayerFromCore(
     banished: player.banished.map((card) => legacyZoneFromCore(card, cardByPasscode, turn)).filter(isDuelZoneCard),
     sideDeck: [],
     extraDeck: [],
-    normalSummonUsed: player.normalSummonUsed,
-    lost: player.lost,
-  };
-}
-
-function corePlayerFromLegacy(player: DuelPlayerState, turn = 0): CoreDuelState["players"][PlayerId] {
-  return {
-    id: player.id,
-    lp: player.lp,
-    mainDeck: player.deck.map(coreInstanceFromLegacy),
-    hand: player.hand.map(coreInstanceFromLegacy),
-    monsterZones: player.monsterZones.map((zone) => coreZoneFromLegacy(zone, turn)),
-    spellTrapZones: player.spellTrapZones.map((zone) => coreZoneFromLegacy(zone, turn)),
-    graveyard: player.graveyard.map((zone) => coreZoneFromLegacy(zone, turn)).filter(isCoreZoneCard),
-    banished: player.banished.map((zone) => coreZoneFromLegacy(zone, turn)).filter(isCoreZoneCard),
-    fieldZone: null,
     normalSummonUsed: player.normalSummonUsed,
     lost: player.lost,
   };
@@ -766,15 +715,6 @@ function legacyInstanceFromCore(
   };
 }
 
-function coreInstanceFromLegacy(instance: DuelCardInstance): CoreCardInstance {
-  return {
-    instanceId: instance.instanceId,
-    cardId: instance.card.passcode,
-    owner: instance.owner,
-    controller: instance.controller,
-  };
-}
-
 function legacyZoneFromCore(
   card: CoreZoneCard | null,
   cardByPasscode: ReadonlyMap<string, CardRecord>,
@@ -797,25 +737,6 @@ function legacyZoneFromCore(
     position: card.position ?? "attack",
     status: card.face === "faceDown" ? "set" : card.position ? "summoned" : "activated",
     setTurn: card.setTurn ?? null,
-  };
-}
-
-function coreZoneFromLegacy(zone: DuelZoneCard | null, turn = 0): CoreZoneCard | null {
-  if (!zone) {
-    return null;
-  }
-
-  return {
-    ...coreInstanceFromLegacy(zone.instance),
-    face: zone.faceDown ? "faceDown" : "faceUp",
-    position: zone.status === "activated" ? null : zone.position,
-    visibility: zone.faceDown ? "hidden" : "public",
-    counters: {},
-    attachments: [],
-    summonedTurn: zone.instance.summonedTurn,
-    positionChangedTurn: zone.instance.positionChangedTurn,
-    attackedTurn: zone.instance.attackedThisTurn ? turn : null,
-    setTurn: zone.setTurn ?? null,
   };
 }
 
@@ -890,19 +811,6 @@ function createRandomLegalDeck(cards: CardRecord[], seed: string): DeckList {
   };
 }
 
-function setLifePoints(state: DuelState, playerId: PlayerId, value: number): void {
-  const lp = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
-  state.players[playerId].lp = lp;
-
-  if (lp === 0 && !state.winner) {
-    state.players[playerId].lost = true;
-    state.winner = opponentOf(playerId);
-    addEvent(state, "lp-zero", `${playerId} has 0 Life Points.`);
-  }
-
-  state.coreState = coreStateFromLegacy(state);
-}
-
 function shouldAutoAdvancePhase(state: DuelState, playerId: PlayerId): boolean {
   if (state.winner || state.activePlayer !== playerId) {
     return false;
@@ -941,15 +849,6 @@ function requiredTributes(card: CardRecord): number {
   }
 
   return 0;
-}
-
-function requireActivePlayer(state: DuelState, playerId: PlayerId): boolean {
-  if (state.activePlayer === playerId) {
-    return true;
-  }
-
-  addEvent(state, "illegal-action", `It is not ${playerId}'s turn.`);
-  return false;
 }
 
 function serializePlayer(player: DuelPlayerState, viewerId: PlayerId): SerializedPlayerState {
@@ -1058,10 +957,6 @@ function emptyZoneIndexes(zones: Array<DuelZoneCard | null>): number[] {
   return zones.flatMap((zone, index) => (zone === null ? [index] : []));
 }
 
-function removeAt<T>(items: T[], index: number): T[] {
-  return [...items.slice(0, index), ...items.slice(index + 1)];
-}
-
 function opponentOf(playerId: PlayerId): PlayerId {
   return playerId === "P1" ? "P2" : "P1";
 }
@@ -1084,9 +979,5 @@ function isSerializedCard(card: SerializedCard | null): card is SerializedCard {
 }
 
 function isDuelZoneCard(card: DuelZoneCard | null): card is DuelZoneCard {
-  return Boolean(card);
-}
-
-function isCoreZoneCard(card: CoreZoneCard | null): card is CoreZoneCard {
   return Boolean(card);
 }

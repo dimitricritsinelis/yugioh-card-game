@@ -61,4 +61,13 @@ export type EngineCommand =
       readonly playerId: PlayerId;
       readonly instanceId: InstanceId;
       readonly destination: OverrideCardDestination;
+    }
+  | {
+      // Manual/override LP edit. Like override-card-location this is an
+      // out-of-rules correction: it ignores turn order and works after the
+      // duel has finished.
+      readonly type: "set-life-points";
+      readonly playerId: PlayerId;
+      readonly targetPlayerId: PlayerId;
+      readonly value: number;
     };

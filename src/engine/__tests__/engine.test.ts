@@ -28,11 +28,34 @@ import {
   YUGI_GOAT_TEST_DECK,
 } from "../index";
 import type { DeckList, DuelCardInstance, DuelState, DuelZoneCard, PlayerId } from "../types";
+import { projectEngineToGameState } from "../adapters/frontendAdapter";
+import type { DuelState as CoreDuelState } from "../core/state";
+import { patchDuelCoreState, putMonsterOnField, putSpellTrapOnField } from "../testing/builders";
 
 const cards = cardsJson as CardRecord[];
 
 function createDuel(config: Parameters<typeof createEngineDuel>[0]): ReturnType<typeof createEngineDuel> {
   return createEngineDuel({ allowUnsupportedCards: true, ...config });
+}
+
+// Core-first rigging: test preconditions are applied to the embedded core
+// state (the single source of truth) and the legacy shape is re-projected.
+function withCorePatch(state: DuelState, patch: (core: CoreDuelState) => CoreDuelState): DuelState {
+  return patchDuelCoreState(state, cards, patch);
+}
+
+function withCoreMonster(
+  core: CoreDuelState,
+  playerId: PlayerId,
+  name: string,
+  zoneIndex: number,
+  options: { position?: "attack" | "defense"; face?: "faceUp" | "faceDown" } = {},
+): CoreDuelState {
+  return putMonsterOnField(core, playerId, cardByName(name), zoneIndex, {
+    position: options.position ?? "attack",
+    face: options.face ?? "faceUp",
+    visibility: options.face === "faceDown" ? "hidden" : "public",
+  }).state;
 }
 
 describe("deck validation", () => {
@@ -185,8 +208,13 @@ describe("duel core rules", () => {
   });
 
   it("stops auto-advance if the turn player decks out during Draw Phase", () => {
-    const state = createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) } });
-    state.players.P1.deck = [];
+    const state = withCorePatch(
+      createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) } }),
+      (core) => ({
+        ...core,
+        players: { ...core.players, P1: { ...core.players.P1, mainDeck: [] } },
+      }),
+    );
 
     const result = advanceToNextDecision(state, "P1");
 
@@ -196,9 +224,14 @@ describe("duel core rules", () => {
   });
 
   it("auto-passes Standby Phase when no prompts exist", () => {
-    const state = createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) } });
-    state.phase = "SP";
-    state.turnFlags.drawnThisTurn = true;
+    const state = withCorePatch(
+      createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith([]) } }),
+      (core) => ({
+        ...core,
+        phase: "SP",
+        turnFlags: { drawnThisTurn: true, battlePhaseConducted: false },
+      }),
+    );
 
     const result = advanceToNextDecision(state, "P1");
 
@@ -246,8 +279,10 @@ describe("duel core rules", () => {
     expect(mainActions.some((action) => action.type === "play-card" && action.intent === "summon")).toBe(true);
     expect(mainActions.some((action) => action.type === "play-card" && action.intent === "activate")).toBe(true);
 
-    state.players.P1.monsterZones[0] = zoneFromCard(state, "P1", cardByName("Battle Ox"), "attack");
-    state.phase = "BP";
+    state = withCorePatch(state, (core) => ({
+      ...withCoreMonster(core, "P1", "Battle Ox", 0),
+      phase: "BP",
+    }));
 
     expect(getLegalActions(state, "P1")).toContainEqual({
       type: "attack",
@@ -286,14 +321,17 @@ describe("duel core rules", () => {
   });
 
   it("requires exact Tributes for Level 7+ Tribute Summons and prefers empty target zones", () => {
-    const state = createDuel({
-      cards,
-      decks: { P1: deckWith(["Buster Blader"]), P2: deckWith([]) },
-      firstPlayer: "P1",
-    });
-    state.phase = "M1";
-    state.players.P1.monsterZones[0] = zoneFromCard(state, "P1", cardByName("Battle Ox"), "attack");
-    state.players.P1.monsterZones[1] = zoneFromCard(state, "P1", cardByName("Mystic Tomato"), "attack");
+    const state = withCorePatch(
+      createDuel({
+        cards,
+        decks: { P1: deckWith(["Buster Blader"]), P2: deckWith([]) },
+        firstPlayer: "P1",
+      }),
+      (core) => ({
+        ...withCoreMonster(withCoreMonster(core, "P1", "Battle Ox", 0), "P1", "Mystic Tomato", 1),
+        phase: "M1",
+      }),
+    );
 
     const busterBlader = state.players.P1.hand.find((instance) => instance.card.name === "Buster Blader")!;
     const emptyZoneSummon = getLegalActions(state, "P1").find(
@@ -359,19 +397,18 @@ describe("duel core rules", () => {
   });
 
   it("offers occupied target zones for Tribute Summons only when all Monster Zones are full", () => {
-    const state = createDuel({
-      cards,
-      decks: { P1: deckWith(["Buster Blader"]), P2: deckWith([]) },
-      firstPlayer: "P1",
-    });
-    state.phase = "M1";
-    state.players.P1.monsterZones = [
-      zoneFromCard(state, "P1", cardByName("Battle Ox"), "attack"),
-      zoneFromCard(state, "P1", cardByName("Mystic Tomato"), "attack"),
-      zoneFromCard(state, "P1", cardByName("Sangan"), "attack"),
-      zoneFromCard(state, "P1", cardByName("Magician of Faith"), "attack"),
-      zoneFromCard(state, "P1", cardByName("Apprentice Magician"), "attack"),
-    ];
+    const boardNames = ["Battle Ox", "Mystic Tomato", "Sangan", "Magician of Faith", "Apprentice Magician"];
+    const state = withCorePatch(
+      createDuel({
+        cards,
+        decks: { P1: deckWith(["Buster Blader"]), P2: deckWith([]) },
+        firstPlayer: "P1",
+      }),
+      (core) => ({
+        ...boardNames.reduce((next, name, zoneIndex) => withCoreMonster(next, "P1", name, zoneIndex), core),
+        phase: "M1",
+      }),
+    );
 
     const busterBlader = state.players.P1.hand.find((instance) => instance.card.name === "Buster Blader")!;
     const occupiedActions = getLegalActions(state, "P1").filter(
@@ -410,13 +447,17 @@ describe("duel core rules", () => {
   });
 
   it("requires one Tribute for Level 5 and 6 Tribute Sets", () => {
-    const state = createDuel({
-      cards,
-      decks: { P1: deckWith(["Summoned Skull"]), P2: deckWith([]) },
-      firstPlayer: "P1",
-    });
-    state.phase = "M1";
-    state.players.P1.monsterZones[0] = zoneFromCard(state, "P1", cardByName("Battle Ox"), "attack");
+    const state = withCorePatch(
+      createDuel({
+        cards,
+        decks: { P1: deckWith(["Summoned Skull"]), P2: deckWith([]) },
+        firstPlayer: "P1",
+      }),
+      (core) => ({
+        ...withCoreMonster(core, "P1", "Battle Ox", 0),
+        phase: "M1",
+      }),
+    );
 
     const summonedSkull = state.players.P1.hand.find((instance) => instance.card.name === "Summoned Skull")!;
     const result = applyAction(state, {
@@ -436,15 +477,23 @@ describe("duel core rules", () => {
   });
 
   it("redacts hidden opponent information during serialization", () => {
-    const state = createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith(["Battle Ox"]) } });
-    const p2Card = state.players.P2.hand[0];
-    state.players.P2.hand = state.players.P2.hand.slice(1);
-    state.players.P2.monsterZones[0] = {
-      instance: p2Card,
-      faceDown: true,
-      position: "defense",
-      status: "set",
-    };
+    const state = withCorePatch(
+      createDuel({ cards, decks: { P1: deckWith([]), P2: deckWith(["Battle Ox"]) } }),
+      (core) => {
+        const withoutHandCard = {
+          ...core,
+          players: {
+            ...core.players,
+            P2: { ...core.players.P2, hand: core.players.P2.hand.slice(1) },
+          },
+        };
+
+        return withCoreMonster(withoutHandCard, "P2", "Battle Ox", 0, {
+          face: "faceDown",
+          position: "defense",
+        });
+      },
+    );
 
     const view = serializeDuel(state, "P1");
 
@@ -462,20 +511,30 @@ describe("duel core rules", () => {
       },
       firstPlayer: "P1",
     });
-    const zeroAtkA = cardByName("Batteryman AA");
-    const zeroAtkB = cardByName("Chaos Necromancer");
+    const rigged = withCorePatch(state, (core) => {
+      const withEmptyHands = {
+        ...core,
+        phase: "BP" as const,
+        players: {
+          ...core.players,
+          P1: { ...core.players.P1, hand: [] },
+          P2: { ...core.players.P2, hand: [] },
+        },
+      };
 
-    state.phase = "BP";
-    state.players.P1.hand = [];
-    state.players.P2.hand = [];
-    state.players.P1.monsterZones[0] = zoneFromCard(state, "P1", zeroAtkA, "attack");
-    state.players.P2.monsterZones[0] = zoneFromCard(state, "P2", zeroAtkB, "attack");
+      return withCoreMonster(
+        withCoreMonster(withEmptyHands, "P1", "Batteryman AA", 0),
+        "P2",
+        "Chaos Necromancer",
+        0,
+      );
+    });
 
-    const result = applyAction(state, {
+    const result = applyAction(rigged, {
       type: "attack",
       playerId: "P1",
-      attackerInstanceId: state.players.P1.monsterZones[0]!.instance.instanceId,
-      defenderInstanceId: state.players.P2.monsterZones[0]!.instance.instanceId,
+      attackerInstanceId: rigged.players.P1.monsterZones[0]!.instance.instanceId,
+      defenderInstanceId: rigged.players.P2.monsterZones[0]!.instance.instanceId,
     });
 
     expect(result.state.players.P1.monsterZones[0]).toBeNull();
@@ -512,22 +571,19 @@ describe("PassiveBoardFillerOpponent", () => {
   });
 
   it("does not exceed the monster zone limit when only one zone is open", () => {
-    const state = createDuel({
-      cards,
-      decks: {
-        P1: deckWith([]),
-        P2: deckWith(["Battle Ox", "Mystic Tomato"]),
-      },
-      firstPlayer: "P2",
-      mode: "match",
-    });
-    state.players.P2.monsterZones = [
-      zoneFromCard(state, "P2", cardByName("Sangan"), "attack"),
-      zoneFromCard(state, "P2", cardByName("Magician of Faith"), "attack"),
-      zoneFromCard(state, "P2", cardByName("Apprentice Magician"), "attack"),
-      zoneFromCard(state, "P2", cardByName("Old Vindictive Magician"), "attack"),
-      null,
-    ];
+    const boardNames = ["Sangan", "Magician of Faith", "Apprentice Magician", "Old Vindictive Magician"];
+    const state = withCorePatch(
+      createDuel({
+        cards,
+        decks: {
+          P1: deckWith([]),
+          P2: deckWith(["Battle Ox", "Mystic Tomato"]),
+        },
+        firstPlayer: "P2",
+        mode: "match",
+      }),
+      (core) => boardNames.reduce((next, name, zoneIndex) => withCoreMonster(next, "P2", name, zoneIndex), core),
+    );
 
     const result = runPassiveBoardFillerOpponentTurn(state, { targetMonsterCount: 5 });
 
@@ -545,11 +601,12 @@ describe("PassiveBoardFillerOpponent", () => {
       firstPlayer: "P2",
       mode: "match",
     });
-    state.phase = "M1";
-    state.players.P1.monsterZones[0] = zoneFromCard(state, "P1", cardByName("Sangan"), "attack");
-    state.players.P2.monsterZones[0] = zoneFromCard(state, "P2", cardByName("Battle Ox"), "attack");
+    const rigged = withCorePatch(state, (core) => ({
+      ...withCoreMonster(withCoreMonster(core, "P1", "Sangan", 0), "P2", "Battle Ox", 0),
+      phase: "M1",
+    }));
 
-    const result = runPassiveBoardFillerOpponentTurn(state);
+    const result = runPassiveBoardFillerOpponentTurn(rigged);
 
     expect(result.state.players.P1.lp).toBe(8000);
     expect(result.events.some((event) => event.type === "battle-resolved")).toBe(false);
@@ -586,13 +643,25 @@ describe("PassiveBoardFillerOpponent", () => {
       mode: "match",
     });
     const trap = state.players.P2.hand.find((instance) => instance.card.name === "Trap Hole")!;
-    state.players.P2.hand = state.players.P2.hand.filter((instance) => instance.instanceId !== trap.instanceId);
-    state.players.P2.spellTrapZones[0] = spellTrapZoneFromCard(trap);
+    const rigged = withCorePatch(state, (core) => {
+      const withoutHandTrap = {
+        ...core,
+        players: {
+          ...core.players,
+          P2: {
+            ...core.players.P2,
+            hand: core.players.P2.hand.filter((instance) => instance.instanceId !== trap.instanceId),
+          },
+        },
+      };
 
-    const result = runPassiveBoardFillerOpponentTurn(state);
+      return putSpellTrapOnField(withoutHandTrap, "P2", cardByName("Trap Hole"), 0, {}).state;
+    });
+
+    const result = runPassiveBoardFillerOpponentTurn(rigged);
 
     expect(result.state.players.P2.spellTrapZones[0]?.instance.card.name).toBe("Trap Hole");
-    expect(result.events.some((event) => event.type === "card-activated")).toBe(false);
+    expect(result.events.some((event) => event.type === "effect-activated")).toBe(false);
   });
 
   it("handles no available monsters without crashing", () => {
@@ -767,23 +836,17 @@ describe("frontend adapter", () => {
       seed: "tribute-adapter",
       suppressWarnings: true,
     });
-    const tributeA = zoneFromCard(game.engine!, "P1", cardByName("Battle Ox"), "attack");
-    const tributeB = zoneFromCard(game.engine!, "P1", cardByName("Mystic Tomato"), "attack");
-    const gameWithTributes = {
-      ...game,
+    const riggedEngine = withCorePatch(game.engine!, (core) => ({
+      ...withCoreMonster(withCoreMonster(core, "P1", "Battle Ox", 0), "P1", "Mystic Tomato", 1),
+      phase: "M1",
+    }));
+    const gameWithTributes = projectEngineToGameState(riggedEngine, {
       selectedCardId: game.player.hand.find((card) => card.card.name === "Buster Blader")!.instanceId,
-      engine: {
-        ...game.engine!,
-        phase: "M1" as const,
-        players: {
-          ...game.engine!.players,
-          P1: {
-            ...game.engine!.players.P1,
-            monsterZones: [tributeA, tributeB, null, null, null],
-          },
-        },
-      },
-    };
+      lastDrawnCardId: null,
+      lastPlacedCardId: null,
+    });
+    const tributeAId = riggedEngine.players.P1.monsterZones[0]!.instance.instanceId;
+    const tributeBId = riggedEngine.players.P1.monsterZones[1]!.instance.instanceId;
     const busterBlader = gameWithTributes.player.hand.find((card) => card.card.name === "Buster Blader")!;
     const placement = getLegalPlacementsForCard(gameWithTributes, busterBlader.instanceId).find(
       (action) => action.intent === "summon" && action.zoneKind === "monster" && action.zoneIndex === 2,
@@ -792,8 +855,8 @@ describe("frontend adapter", () => {
     expect(placement).toMatchObject({ tributeCount: 2 });
 
     const afterSummon = placeSelectedCard(gameWithTributes, "summon", "monster", 2, [
-      tributeA.instance.instanceId,
-      tributeB.instance.instanceId,
+      tributeAId,
+      tributeBId,
     ]);
 
     expect(afterSummon.player.monsterZones[2]?.instance.card.name).toBe("Buster Blader");
@@ -827,38 +890,12 @@ describe("frontend adapter", () => {
       seed: "battle-flow",
       suppressWarnings: true,
     });
-    const battleOx = cardByName("Battle Ox");
-    const battleOxZone = zoneFromCard(game.engine!, "P1", battleOx, "attack");
-    const gameWithAttacker = {
-      ...game,
-      engine: {
-        ...game.engine!,
-        players: {
-          ...game.engine!.players,
-          P1: {
-            ...game.engine!.players.P1,
-            monsterZones: [battleOxZone, null, null, null, null],
-          },
-        },
-      },
-      player: {
-        ...game.player,
-        monsterZones: [
-          {
-            instance: {
-              instanceId: battleOxZone.instance.instanceId,
-              card: battleOx,
-            },
-            faceDown: false,
-            stance: "attack" as const,
-          },
-          null,
-          null,
-          null,
-          null,
-        ],
-      },
-    };
+    const riggedEngine = withCorePatch(game.engine!, (core) => withCoreMonster(core, "P1", "Battle Ox", 0));
+    const gameWithAttacker = projectEngineToGameState(riggedEngine, {
+      selectedCardId: null,
+      lastDrawnCardId: null,
+      lastPlacedCardId: null,
+    });
 
     // GOAT rules: turn 1 has no Battle Phase even with an attacker available.
     expect(canEnterBattle(gameWithAttacker)).toBe(false);
@@ -930,37 +967,6 @@ function cardByName(name: string): CardRecord {
   return card;
 }
 
-function zoneFromCard(
-  state: DuelState,
-  playerId: PlayerId,
-  card: CardRecord,
-  position: "attack" | "defense",
-) {
-  return {
-    instance: {
-      instanceId: `${playerId}-${card.passcode}-fixture`,
-      card,
-      owner: playerId,
-      controller: playerId,
-      createdTurn: state.turn,
-      summonedTurn: state.turn,
-      positionChangedTurn: null,
-      attackedThisTurn: false,
-    },
-    faceDown: false,
-    position,
-    status: "summoned" as const,
-  };
-}
-
-function spellTrapZoneFromCard(instance: DuelCardInstance): DuelZoneCard {
-  return {
-    instance,
-    faceDown: true,
-    position: "attack",
-    status: "set",
-  };
-}
 
 function isVisibleZoneCard(zone: ZoneCard | boolean | null): zone is ZoneCard {
   return typeof zone === "object" && zone !== null && !zone.faceDown;

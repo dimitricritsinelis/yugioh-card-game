@@ -1,8 +1,9 @@
 import type { CardRecord, Phase } from "../../types";
 import type { CardInstance, FaceState, MonsterPosition, ZoneCard } from "../core/cardRefs";
 import { findCardByInstanceId } from "../core/zones";
+import { projectDuelFromCore } from "../duel";
 import { createDuel, type CreateDuelResult } from "../reducer";
-import type { DeckList, PlayerId } from "../types";
+import type { DeckList, DuelState as LegacyDuelState, PlayerId } from "../types";
 import type { DuelState, PlayerState } from "../core/state";
 
 export interface CreateRiggedDuelOptions {
@@ -191,6 +192,24 @@ export function setPhase(
     ...state,
     phase,
     activePlayer,
+  };
+}
+
+// Rigs a legacy (UI-facing) duel state core-first: applies the patch to the
+// embedded core state — the single source of truth — and re-projects the
+// legacy shape from it, preserving the existing action log.
+export function patchDuelCoreState(
+  state: LegacyDuelState,
+  cards: readonly CardRecord[],
+  patch: (core: DuelState) => DuelState,
+): LegacyDuelState {
+  if (!state.coreState) {
+    throw new Error("Legacy duel state is missing its embedded core state.");
+  }
+
+  return {
+    ...projectDuelFromCore(patch(state.coreState), cards, state.mode, []),
+    events: state.events,
   };
 }
 
