@@ -25,7 +25,7 @@ import type {
 
 const CLIENT_ID_KEY = "goat-online-client-id";
 const SESSION_KEY = "goat-online-session";
-const FALLBACK_POLL_MS = 5_000;
+export const FALLBACK_POLL_MS = 5_000;
 
 interface StoredOnlineSession {
   readonly gameId: string;
